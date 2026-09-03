@@ -85,6 +85,14 @@ with gravity removed (0 at rest, ~0.2–0.3 g in normal braking, 0.5 g is a hard
 with the dominant direction. Playback is always muted: this is a telemetry review tool, not a
 media player, so the audio track is never rendered.
 
+### Import GeoJSON overlays
+
+*Import → GeoJSON* (or drop a `.geojson` / `.json` file onto the map) draws operating zones,
+planned routes or points of interest underneath the recording's route. Each file becomes a layer
+listed in the map's top-right panel — untick to hide, ⤢ to zoom to it, ✕ to remove; click a
+feature for its properties. Files must be WGS84 longitude/latitude (a FeatureCollection, a single
+Feature or a bare geometry); layers stay when you switch recordings.
+
 ## Command-line extraction
 
 ```bash
@@ -104,7 +112,7 @@ server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header,
           wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), app.js
           (routes), export.js, config.js, json-cache.js, ids.js, log.js, index.js
 web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player, map,
-          charts, timeline, track, motion, gauges, hud, stats, library, util, api
+          overlays + geojson (imported layers), charts, timeline, track, motion, gauges, hud, stats, library, util, api
 tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md)
 scripts/  dump-telemetry.js (CLI), fetch-samples.sh, macos-launch-agent.sh (run at login)
 docs/     SPEC.md
@@ -114,7 +122,7 @@ docs/     SPEC.md
 ## Development
 
 ```bash
-npm test          # 26 tests: demuxer, library, telemetry, exports, HTTP API
+npm test          # 28 tests: demuxer, library, telemetry, exports, HTTP API, GeoJSON import
 npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>

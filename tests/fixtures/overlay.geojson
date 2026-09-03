@@ -1,0 +1,12 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    { "type": "Feature", "properties": { "name": "Depot zone", "kind": "ODD", "speed_limit_kph": 30 },
+      "geometry": { "type": "Polygon", "coordinates": [[[-117.3285, 33.1258], [-117.3255, 33.1258], [-117.3255, 33.1275], [-117.3285, 33.1275], [-117.3285, 33.1258]]] } },
+    { "type": "Feature", "properties": { "name": "Planned route" },
+      "geometry": { "type": "LineString", "coordinates": [[-117.3290, 33.1262], [-117.3272, 33.1266], [-117.3250, 33.1270]] } },
+    { "type": "Feature", "properties": { "name": "Gate A", "note": "entry" },
+      "geometry": { "type": "Point", "coordinates": [-117.3272, 33.1265] } },
+    { "type": "Feature", "properties": { "name": "no geometry" }, "geometry": null }
+  ]
+}

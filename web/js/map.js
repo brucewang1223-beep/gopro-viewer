@@ -141,6 +141,10 @@ export class TrackMap {
     this.map.addControl(new Control());
   }
 
+  /** The underlying Leaflet map and the route's canvas renderer, for modules that add their own layers (overlays). */
+  get leaflet() { return this.map; }
+  get pathRenderer() { return this.renderer; }
+
   invalidate() { this.map.invalidateSize(); }
 
   /** Swap the basemap (config.json "tiles": osm | cartoLight | cartoDark | satellite). */
