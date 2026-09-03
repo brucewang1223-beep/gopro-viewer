@@ -29,6 +29,21 @@ or create `config.json` from `config.example.json`. All options: `npm start -- -
 Try it without a camera: `npm run samples` downloads GoPro's public sample clips into
 `samples/`, then `npm start -- --media samples`.
 
+## Run at login and use it as a desktop app (macOS)
+
+```bash
+npm run autostart            # launchd agent: starts the server at login, restarts it if it crashes
+npm run autostart:status     # agent state + health check
+npm run autostart:remove
+```
+
+The agent runs `node server/index.js` in this folder and logs to `.cache/server.log`. With the
+server always on, install the page as a Chrome app so it gets its own window and Dock icon: open
+http://127.0.0.1:8790 in Chrome → ⋮ menu → *Cast, save and share* → *Install page as app…*
+(the page ships a web-app manifest and icons, so Chrome offers this directly). The installed app
+lives in `~/Applications/Chrome Apps.localized/`; right-click its Dock icon → *Options* →
+*Keep in Dock* to pin it.
+
 ## Using the viewer
 
 Pick a recording in the sidebar (grouped by date; chapters of one recording are merged).
@@ -88,10 +103,10 @@ server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header,
           orientation), gpmf-probe.js (scan-time GPS fix probe), decode.js (gopro-telemetry
           wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), app.js
           (routes), export.js, config.js, json-cache.js, ids.js, log.js, index.js
-web/      browser UI (plain ES modules, no build step): app.js (wiring, keys), player, map,
+web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player, map,
           charts, timeline, track, motion, gauges, hud, stats, library, util, api
 tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md)
-scripts/  dump-telemetry.js (CLI), fetch-samples.sh
+scripts/  dump-telemetry.js (CLI), fetch-samples.sh, macos-launch-agent.sh (run at login)
 docs/     SPEC.md
 .cache/   per-file metadata and telemetry cache (safe to delete)
 ```

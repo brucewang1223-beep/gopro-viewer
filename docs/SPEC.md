@@ -34,6 +34,7 @@ speed" matters. Secondary use: exporting the telemetry (GPX / CSV) for offline a
 | Stats | Distance, max/avg speed, moving time, elevation gain/loss, fix-quality histogram, camera model/firmware, UTC start. |
 | Export | GPX 1.1 (fixed points only, with ele/time/speed) and CSV (GPS, accelerometer, gyroscope). CLI `scripts/dump-telemetry.js` for headless extraction. |
 | Config | Media roots via UI (persisted to `config.json`), CLI flags, environment variables. Server binds 127.0.0.1 by default. |
+| Desktop use | `web/manifest.webmanifest` + icons make the page installable as a Chrome app (own window, Dock icon); `scripts/macos-launch-agent.sh` (`npm run autostart`) starts the server at login via launchd. |
 
 ### Out of scope (v0.1)
 

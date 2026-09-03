@@ -18,7 +18,10 @@
     "test": "node --test \"tests/**/*.test.js\"",
     "lint": "eslint .",
     "samples": "bash scripts/fetch-samples.sh",
-    "telemetry": "node scripts/dump-telemetry.js"
+    "telemetry": "node scripts/dump-telemetry.js",
+    "autostart": "bash scripts/macos-launch-agent.sh install",
+    "autostart:status": "bash scripts/macos-launch-agent.sh status",
+    "autostart:remove": "bash scripts/macos-launch-agent.sh uninstall"
   },
   "dependencies": {
     "egm96-universal": "^1.1.1",

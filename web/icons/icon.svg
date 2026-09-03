@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2029"/>
+      <stop offset="1" stop-color="#0b0d11"/>
+    </linearGradient>
+    <linearGradient id="route" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4cc2ff"/>
+      <stop offset="1" stop-color="#35d07f"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect x="14" y="14" width="484" height="484" rx="100" fill="none" stroke="#2a313d" stroke-width="4"/>
+  <!-- speed arc -->
+  <path d="M104 372 A160 160 0 1 1 408 372" fill="none" stroke="#2f3745" stroke-width="18" stroke-linecap="round"/>
+  <path d="M104 372 A160 160 0 0 1 160 124" fill="none" stroke="#4cc2ff" stroke-width="18" stroke-linecap="round" opacity=".9"/>
+  <!-- route -->
+  <path d="M120 330 C 170 300, 175 210, 235 205 S 300 300, 350 250 S 380 170, 396 176" fill="none" stroke="url(#route)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M120 330 C 170 300, 175 210, 235 205" fill="none" stroke="#8b93a7" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" opacity=".35"/>
+  <!-- position marker -->
+  <circle cx="396" cy="176" r="46" fill="#ffb020" opacity=".22"/>
+  <circle cx="396" cy="176" r="26" fill="#ffb020" stroke="#0b0d11" stroke-width="8"/>
+  <!-- play triangle -->
+  <path d="M232 392 L232 472 L300 432 Z" fill="#e6e9ef"/>
+</svg>
