@@ -4,6 +4,9 @@
  *   CLI    : --media <dir> (repeatable)  --port <n>  --host <ip>  --config <file>  --cache <dir>  --accel-hz <n>  --log-level <lvl>
  *   Env    : GOPRO_VIEWER_MEDIA (":"-separated), GOPRO_VIEWER_PORT, GOPRO_VIEWER_HOST, GOPRO_VIEWER_CACHE, GOPRO_VIEWER_CONFIG, LOG_LEVEL
  *   File   : config.json in the project root (see config.example.json). Roots added from the UI are persisted here.
+ *
+ * The K2 map credentials live in the "map" block of config.json only (never in the
+ * environment, never in a committed file): config.json is git-ignored.
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -12,12 +15,21 @@ import { fileURLToPath } from 'node:url';
 
 export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/** Basemaps offered by the UI; the matching style lives in web/styles/k2-<name>.json. */
+export const BASEMAPS = ['streets', 'satellite'];
+
 const DEFAULTS = Object.freeze({
   host: '127.0.0.1',
   port: 8790,
   roots: [],
   accelHz: 25,
-  tiles: 'osm',
+  map: {
+    api: 'https://map.lumobility.com/api',
+    glyphs: 'https://map.lumobility.com/map-styles',
+    token: '',
+    basemap: 'streets',
+    labels: true,
+  },
   cacheDir: path.join(PROJECT_ROOT, '.cache'),
   configFile: path.join(PROJECT_ROOT, 'config.json'),
   logLevel: 'info',
@@ -83,6 +95,7 @@ function mergeRoots(fileRoots, envRoots, cliRoots) {
 function validate(cfg) {
   if (!Number.isInteger(cfg.port) || cfg.port < 0 || cfg.port > 65535) throw new Error(`Invalid port: ${cfg.port}`);
   if (!(cfg.accelHz > 0 && cfg.accelHz <= 200)) throw new Error(`Invalid accelHz: ${cfg.accelHz}`);
+  if (!BASEMAPS.includes(cfg.map.basemap)) throw new Error(`Invalid map.basemap: ${cfg.map.basemap} (expected ${BASEMAPS.join(' | ')})`);
 }
 
 export async function loadConfig({ argv = process.argv.slice(2), env = process.env } = {}) {
@@ -98,6 +111,7 @@ export async function loadConfig({ argv = process.argv.slice(2), env = process.e
     cacheDir: first(cli.cacheDir, env.GOPRO_VIEWER_CACHE, file.cacheDir ? path.resolve(file.cacheDir) : DEFAULTS.cacheDir),
     accelHz: first(cli.accelHz, file.accelHz, DEFAULTS.accelHz),
     logLevel: first(cli.logLevel, env.LOG_LEVEL, file.logLevel, DEFAULTS.logLevel),
+    map: { ...DEFAULTS.map, ...file.map },
     roots: mergeRoots(file.roots, env.GOPRO_VIEWER_MEDIA, cli.roots),
     help: !!cli.help,
   };
@@ -105,9 +119,9 @@ export async function loadConfig({ argv = process.argv.slice(2), env = process.e
   return cfg;
 }
 
-/** Persist the user-editable subset (roots, port, host, tiles) back to config.json. */
+/** Persist the user-editable subset (roots, port, host, map) back to config.json. */
 export async function saveConfig(cfg) {
-  const out = { host: cfg.host, port: cfg.port, roots: cfg.roots, accelHz: cfg.accelHz, tiles: cfg.tiles };
+  const out = { host: cfg.host, port: cfg.port, roots: cfg.roots, accelHz: cfg.accelHz, map: cfg.map };
   await mkdir(path.dirname(cfg.configFile), { recursive: true });
   await writeFile(cfg.configFile, JSON.stringify(out, null, 2) + '\n', 'utf8');
 }

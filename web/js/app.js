@@ -18,6 +18,7 @@ import { fmtTime, padL, el } from './util.js';
 const $ = (id) => document.getElementById(id);
 const HUD_INTERVAL_MS = 80; // ~12 Hz is plenty for text
 const SKIP_STORAGE_KEY = 'gopro-viewer.skipStep';
+const MAP_STORAGE_KEY = 'gopro-viewer.map';
 const EXPORTS = [['export-gpx', 'gpx'], ['export-geojson', 'geojson'], ['export-csv', 'csv', 'gps'], ['export-accl', 'csv', 'accl']];
 
 const state = { recording: null, track: null, motion: null };
@@ -51,7 +52,11 @@ const hideVideoOverlay = () => $('video-overlay').classList.add('hidden');
 
 const video = $('video');
 const player = new Player(video, { onTime, onChapter: (i) => setHudChapter(i + 1, player.chapters.length), onState: onPlayerState, onError: onVideoError });
-const map = new TrackMap($('map'), { tiles: 'osm', onSeek: (t) => player.seek(t) });
+const map = new TrackMap($('map'), {
+  ...savedMapPrefs(),
+  onSeek: (t) => player.seek(t),
+  onPrefs: (prefs) => { try { localStorage.setItem(MAP_STORAGE_KEY, JSON.stringify(prefs)); } catch { /* private mode */ } },
+});
 const timeline = new Timeline($('timeline'), { onSeek: (t) => player.seek(t) });
 const charts = new Charts($('charts'), { onSeek: (t) => player.seek(t), onLayout: (left, right) => timeline.setInsets(left, right) });
 const gauges = new Gauges($('gauges'));
@@ -213,6 +218,11 @@ function savedSkipStep() {
   try { return localStorage.getItem(SKIP_STORAGE_KEY); } catch { return null; }
 }
 
+/** Basemap / labels last chosen in this browser; config.json supplies the first-run default. */
+function savedMapPrefs() {
+  try { return JSON.parse(localStorage.getItem(MAP_STORAGE_KEY)) ?? {}; } catch { return {}; }
+}
+
 const skipAmount = (e) => (e.shiftKey ? skipStep * 6 : skipStep);
 
 /** Flip a checkbox and run its change handler, exactly as a click would. */
@@ -235,6 +245,7 @@ const KEYS = new Map([
   ['h', () => toggle('hud-toggle')],
   ['g', () => toggle('gauges-toggle')],
   ['f', () => map.fitTrack()],
+  ['b', () => map.toggleBasemap()],
   ['Home', () => player.seek(0)],
   ['End', () => player.seek(player.duration - 0.1)],
 ]);
@@ -277,6 +288,17 @@ function bindControls() {
   document.addEventListener('keydown', onKeyDown);
 }
 
+/** Basemap defaults from config.json, plus a warning when the K2 token is missing. */
+async function applyMapConfig() {
+  let cfg;
+  try { cfg = (await api.config()).map; } catch { return; }
+  if (!cfg) return;
+  const saved = savedMapPrefs();
+  if (saved.basemap == null && cfg.basemap) map.setBasemap(cfg.basemap, { user: false });
+  if (saved.labels == null) map.setLabels(cfg.labels !== false, { user: false });
+  if (!cfg.configured) toast('No map token configured — add map.token to config.json to load the K2 basemap.', 'warn', 12000);
+}
+
 /* ---------- boot ---------- */
 
 async function boot() {
@@ -284,8 +306,7 @@ async function boot() {
   video.muted = true;
   video.addEventListener('volumechange', () => { if (!video.muted) video.muted = true; });
   bindControls();
-  // basemap: config.json "tiles" (osm | cartoLight | cartoDark | satellite)
-  try { const cfg = await api.config(); if (cfg.tiles && cfg.tiles !== 'osm') map.setBasemap(cfg.tiles); } catch { /* keep the default */ }
+  await applyMapConfig();
   const data = await loadLibrary();
   if (data && !data.recordings.length && !data.roots.length) $('root-input').focus();
   window.addEventListener('resize', () => map.invalidate());

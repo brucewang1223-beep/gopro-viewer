@@ -1,0 +1,1057 @@
+{
+  "version": 8,
+  "name": "K2 Satellite Hybrid",
+  "glyphs": "/api/map-fonts/{fontstack}/{range}.pbf",
+  "sources": {
+    "worldSatellite": {
+      "type": "raster",
+      "tiles": [
+        "/api/map/v2/tiles/World-Satellite/{z}/{x}/{y}.jpeg"
+      ],
+      "tileSize": 256,
+      "maxzoom": 12,
+      "attribution": "K2 Maps"
+    },
+    "uaeSatellite": {
+      "type": "raster",
+      "tiles": [
+        "/api/map/v2/tiles/UAE-Satellite/{z}/{x}/{y}.jpeg"
+      ],
+      "tileSize": 256,
+      "minzoom": 1,
+      "maxzoom": 19,
+      "bounds": [
+        51.52587890625,
+        22.553147478403194,
+        56.656494140625,
+        26.46073804319089
+      ],
+      "attribution": "K2 Maps"
+    },
+    "worldmaptiles": {
+      "type": "vector",
+      "tiles": [
+        "/api/map/v2/tiles/World-Vector/{z}/{x}/{y}.pbf"
+      ],
+      "maxzoom": 7,
+      "attribution": "K2 Maps"
+    },
+    "openmaptiles": {
+      "type": "vector",
+      "tiles": [
+        "/api/map/v2/tiles/UAE-Vector/{z}/{x}/{y}.pbf"
+      ],
+      "minzoom": 7,
+      "maxzoom": 14,
+      "attribution": "K2 Maps"
+    }
+  },
+  "layers": [
+    {
+      "id": "k2-hybrid-background",
+      "type": "background",
+      "paint": {
+        "background-color": "#0d2f38"
+      }
+    },
+    {
+      "id": "k2-hybrid-worldsatellite",
+      "type": "raster",
+      "source": "worldSatellite",
+      "paint": {
+        "raster-saturation": -0.04,
+        "raster-contrast": -0.03,
+        "raster-brightness-min": 0.06,
+        "raster-brightness-max": 0.96
+      }
+    },
+    {
+      "id": "k2-hybrid-uaesatellite",
+      "type": "raster",
+      "source": "uaeSatellite",
+      "paint": {
+        "raster-saturation": -0.04,
+        "raster-contrast": -0.03,
+        "raster-brightness-min": 0.06,
+        "raster-brightness-max": 0.96
+      }
+    },
+    {
+      "id": "k2-hybrid-world-country-boundary-land-casing",
+      "type": "line",
+      "source": "worldmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 0,
+      "maxzoom": 8.8,
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "rgba(8, 20, 27, 0.86)",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          1.8,
+          6,
+          2.5,
+          12,
+          4.4
+        ],
+        "line-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.68,
+          7,
+          0.82,
+          12,
+          0.92
+        ]
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "admin_level",
+          2
+        ],
+        [
+          "==",
+          "maritime",
+          0
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-world-country-boundary-land",
+      "type": "line",
+      "source": "worldmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 0,
+      "maxzoom": 8.8,
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "rgba(255, 255, 255, 0.9)",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.75,
+          6,
+          1.05,
+          12,
+          2.25
+        ],
+        "line-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.76,
+          7,
+          0.88,
+          12,
+          0.98
+        ]
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "admin_level",
+          2
+        ],
+        [
+          "==",
+          "maritime",
+          0
+        ],
+        [
+          "!=",
+          "disputed",
+          1
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-world-country-boundary-land-disputed",
+      "type": "line",
+      "source": "worldmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 0,
+      "maxzoom": 8.8,
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "rgba(255, 255, 255, 0.9)",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.75,
+          6,
+          1.05,
+          12,
+          2.25
+        ],
+        "line-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.7,
+          7,
+          0.82,
+          12,
+          0.94
+        ],
+        "line-dasharray": [
+          4,
+          3
+        ]
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "admin_level",
+          2
+        ],
+        [
+          "==",
+          "maritime",
+          0
+        ],
+        [
+          "==",
+          "disputed",
+          1
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-uae-country-boundary-land-casing",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 6.8,
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "rgba(8, 20, 27, 0.86)",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          1.8,
+          6,
+          2.5,
+          12,
+          4.4
+        ],
+        "line-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.68,
+          7,
+          0.82,
+          12,
+          0.92
+        ]
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "admin_level",
+          2
+        ],
+        [
+          "==",
+          "maritime",
+          0
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-uae-country-boundary-land",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 6.8,
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "rgba(255, 255, 255, 0.9)",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.75,
+          6,
+          1.05,
+          12,
+          2.25
+        ],
+        "line-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.76,
+          7,
+          0.88,
+          12,
+          0.98
+        ]
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "admin_level",
+          2
+        ],
+        [
+          "==",
+          "maritime",
+          0
+        ],
+        [
+          "!=",
+          "disputed",
+          1
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-uae-country-boundary-land-disputed",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "boundary",
+      "minzoom": 6.8,
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "rgba(255, 255, 255, 0.9)",
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.75,
+          6,
+          1.05,
+          12,
+          2.25
+        ],
+        "line-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          0,
+          0.7,
+          7,
+          0.82,
+          12,
+          0.94
+        ],
+        "line-dasharray": [
+          4,
+          3
+        ]
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "admin_level",
+          2
+        ],
+        [
+          "==",
+          "maritime",
+          0
+        ],
+        [
+          "==",
+          "disputed",
+          1
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-world-country-label",
+      "type": "symbol",
+      "source": "worldmaptiles",
+      "source-layer": "place",
+      "minzoom": 0,
+      "maxzoom": 8.8,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Bold"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          1,
+          11,
+          4,
+          13,
+          7,
+          17
+        ],
+        "text-max-width": 8,
+        "text-transform": "uppercase",
+        "text-letter-spacing": 0.06,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#e7f2ff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.6,
+        "text-halo-blur": 0.35
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "class",
+          "country"
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-world-state-label",
+      "type": "symbol",
+      "source": "worldmaptiles",
+      "source-layer": "place",
+      "minzoom": 0,
+      "maxzoom": 8.8,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Bold"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          4,
+          10,
+          7,
+          12,
+          10,
+          15
+        ],
+        "text-max-width": 8,
+        "text-transform": "uppercase",
+        "text-letter-spacing": 0.06,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#e7f2ff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.35,
+        "text-halo-blur": 0.35,
+        "text-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          4,
+          0.74,
+          8,
+          0.9,
+          11,
+          0.72
+        ]
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "class",
+          "state"
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-world-place-label",
+      "type": "symbol",
+      "source": "worldmaptiles",
+      "source-layer": "place",
+      "minzoom": 0,
+      "maxzoom": 8.8,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Bold"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          6,
+          10,
+          10,
+          13,
+          14,
+          24
+        ],
+        "text-max-width": 8,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#f8fbff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.35,
+        "text-halo-blur": 0.35
+      },
+      "filter": [
+        "all",
+        [
+          "in",
+          "class",
+          "city",
+          "town",
+          "village",
+          "suburb",
+          "neighbourhood",
+          "hamlet",
+          "island"
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-world-water-label",
+      "type": "symbol",
+      "source": "worldmaptiles",
+      "source-layer": "water_name",
+      "minzoom": 2,
+      "maxzoom": 8.8,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          6,
+          11,
+          12,
+          14
+        ],
+        "text-max-width": 8,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#aee5ff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.35,
+        "text-halo-blur": 0.35
+      }
+    },
+    {
+      "id": "k2-hybrid-uae-country-label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 6.8,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Bold"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          1,
+          11,
+          4,
+          13,
+          7,
+          17
+        ],
+        "text-max-width": 8,
+        "text-transform": "uppercase",
+        "text-letter-spacing": 0.06,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#e7f2ff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.6,
+        "text-halo-blur": 0.35
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "class",
+          "country"
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-uae-state-label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 6.8,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Bold"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          4,
+          10,
+          7,
+          12,
+          10,
+          15
+        ],
+        "text-max-width": 8,
+        "text-transform": "uppercase",
+        "text-letter-spacing": 0.06,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#e7f2ff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.35,
+        "text-halo-blur": 0.35,
+        "text-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          4,
+          0.74,
+          8,
+          0.9,
+          11,
+          0.72
+        ]
+      },
+      "filter": [
+        "all",
+        [
+          "==",
+          "class",
+          "state"
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-uae-place-label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 6.8,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Bold"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          6,
+          10,
+          10,
+          13,
+          14,
+          24
+        ],
+        "text-max-width": 8,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#f8fbff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.35,
+        "text-halo-blur": 0.35
+      },
+      "filter": [
+        "all",
+        [
+          "in",
+          "class",
+          "city",
+          "town",
+          "village",
+          "suburb",
+          "neighbourhood",
+          "hamlet",
+          "island"
+        ]
+      ]
+    },
+    {
+      "id": "k2-hybrid-uae-water-label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "water_name",
+      "minzoom": 6.8,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          6,
+          11,
+          12,
+          14
+        ],
+        "text-max-width": 8,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#aee5ff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.35,
+        "text-halo-blur": 0.35
+      }
+    },
+    {
+      "id": "k2-hybrid-uae-road-label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "transportation_name",
+      "minzoom": 12,
+      "layout": {
+        "symbol-placement": "line",
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ],
+          [
+            "get",
+            "ref"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          12,
+          10,
+          16,
+          13
+        ],
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#ffffff",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.25,
+        "text-halo-blur": 0.35
+      }
+    },
+    {
+      "id": "k2-hybrid-uae-poi-label",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "poi",
+      "minzoom": 14.4,
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:latin"
+          ],
+          [
+            "get",
+            "name:en"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          14,
+          10,
+          17,
+          12
+        ],
+        "text-anchor": "top",
+        "text-offset": [
+          0,
+          0.45
+        ],
+        "text-max-width": 8,
+        "text-optional": true
+      },
+      "paint": {
+        "text-color": "#f4f7fb",
+        "text-halo-color": "rgba(12, 20, 25, 0.82)",
+        "text-halo-width": 1.35,
+        "text-halo-blur": 0.35,
+        "text-opacity": 0.92
+      }
+    }
+  ]
+}

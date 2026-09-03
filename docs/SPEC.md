@@ -24,7 +24,7 @@ speed" matters. Secondary use: exporting the telemetry (GPX / CSV) for offline a
 | Playback | Play MP4/MOV directly in the browser (HTTP Range streaming, no transcoding). Chapters play as one continuous timeline with automatic chapter advance. Playback rate 0.25×–4×. Frame stepping. Optional LRV proxy playback. |
 | Telemetry | Extract the `gpmd` track without reading the media payload; decode with `gopro-telemetry`; normalise into columnar arrays on a global time base; cache per chapter on disk. GPS5 (HERO5–10) and GPS9 (HERO11+) supported, GPS9 preferred. |
 | Sync | Map marker (with heading), HUD (speed, altitude, lat/lon, fix quality/DOP, UTC + local clock, |a|), chart playheads and timeline follow the video within one frame; seeking from map / charts / timeline / keyboard. |
-| Map | Leaflet with an OpenStreetMap basemap (alternatives selectable via `config.json` `tiles`: osm, cartoLight, cartoDark, satellite; no on-map layer switcher). On selection the whole route is fitted and centred. Route drawn in two colours — travelled (accent) vs remaining (grey) — updated as playback advances; optional speed colouring (remaining part dimmed). Prominent pulsing position marker with heading. Map stays freely zoomable; "fit whole route" and "centre on position" buttons under the zoom control (also key `F`); follow mode; invalid-fix samples excluded. |
+| Map | MapLibre GL with the K2 basemaps of `map.lumobility.com`, rendered from the same two styles that service publishes: **Map** (K2 Mapbox Streets Match — UAE vector to z14 over a world vector base to z7, road shields drawn on a canvas at style load because K2 ships no sprite) and **Satellite** (K2 Satellite Hybrid — UAE imagery to z19 over world imagery to z12, with a Labels chip that hides the label layers). The switcher sits bottom-left as two preview cards, mirroring K2's own picker; key `B` cycles it; the choice is remembered in `localStorage` and `config.json` only supplies the first-run default. Tiles and glyphs are fetched through `/api/map*` so the token stays server-side (§4.5). On selection the whole route is fitted and centred. Route drawn in two colours — travelled (accent) vs remaining (grey) — updated as playback advances; optional speed colouring (remaining part dimmed). Prominent pulsing position marker with heading. Map stays freely zoomable; "fit whole route" and "centre on position" buttons top-left (also key `F`); follow mode; invalid-fix samples excluded. |
 | Charts | Speed (km/h), altitude (m), G-force (longitudinal / lateral / vertical g), gyro rates (yaw / pitch / roll °/s); the chart set adapts to the data available; shared cursor and zoom; chapter boundaries marked. |
 | Gauges | Instrument cluster centred at the top of the video: G-force ball (friction circle, 0.5 g / 1 g rings, trail), gyro ball (yaw ↔, pitch ↕, roll-rate arc at the rim) and attitude bubble level (pitch / roll from the measured gravity direction). Toggle with `G`. |
 | Audio | Always muted by design (`<video muted>` and enforced in code); no volume UI. Muted playback also avoids browser autoplay restrictions. |
@@ -47,7 +47,7 @@ highlight tags (HLMT), sensor streams other than GPS/ACCL/GYRO (available in
 
 ```
 ┌──────────────────────── browser (web/) ────────────────────────┐
-│ app.js (wiring, keys)  library.js  player.js  map.js (Leaflet) │
+│ app.js (wiring, keys)  library.js  player.js  map.js (MapLibre)│
 │ charts.js (uPlot)  timeline.js  track.js (time lookups)        │
 │ motion.js (driver frame)  gauges.js  hud.js  stats.js  util.js │
 └───────────────▲───────────────────────────▲─────────────────────┘
@@ -162,7 +162,9 @@ time, `CACHE_VERSION` and the IMU rate. Deleting `.cache/` is always safe.
 | `GET /api/recordings/:id/telemetry` | merged telemetry JSON |
 | `GET /api/recordings/:id/export.gpx` | GPX download |
 | `GET /api/recordings/:id/export.csv?stream=gps\|accl\|gyro` | CSV download |
-| `GET /`, `/vendor/leaflet/*`, `/vendor/uplot/*` | UI and vendored libraries |
+| `GET /api/map/v2/tiles/…` | K2 tiles / TileJSON, token added server-side, 7-day browser cache |
+| `GET /api/map-fonts/…` | K2 glyph ranges (no token upstream) |
+| `GET /`, `/vendor/maplibre/*`, `/vendor/uplot/*` | UI and vendored libraries |
 
 Errors are JSON `{ error }` with 400 (bad input), 404 (unknown id / route), 500 (unexpected).
 
@@ -176,6 +178,19 @@ Dynamic acceleration `d = a − g⃗` gives `lonG = d·forward / 9.80665` (+ acc
 (+ rolling right). Attitude: `pitchDeg = asin(up·forward_cam)`, `rollDeg = −asin(up·right_cam)`;
 the bubble moves to the high side. Bins where the optical axis is within ~6° of vertical are
 marked undefined (no heading axis). A rear-facing camera would flip forward/lateral signs (v0.2: mount toggle).
+
+### 4.5 Map credentials and route rendering
+
+`config.json` holds the K2 `api`, `glyphs`, `token`, `basemap` and `labels`; only that file
+ever sees the token. `server/map.js` whitelists the tile and glyph path shapes, appends the
+token and streams the upstream response back, so the committed styles in `web/styles/` carry
+no host and no credential, and `/api/config` reports only whether a token is configured.
+
+The route is uploaded to the renderer once as one GeoJSON LineString per run
+(`lineMetrics: true`). Playback moves the cut point of a `line-gradient` per run instead of
+pushing new geometry, so cost is independent of track length; speed colouring is the same
+mechanism with a sampled colour ramp and a dimmed copy of it for the part not yet driven
+(`web/js/map-route.js`, unit tested).
 
 ## 6. Synchronisation model
 
@@ -203,6 +218,7 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 | cache dir | `--cache` | `GOPRO_VIEWER_CACHE` | `./.cache` |
 | IMU rate | `--accel-hz` | — | `25` |
 | log level | `--log-level` | `LOG_LEVEL` | `info` |
+| K2 map | — | — | `map.api`, `map.glyphs`, `map.token`, `map.basemap`, `map.labels` — `config.json` only, so the token never lands in a shell history or a process listing |
 
 ## 8. Acceptance criteria (v0.1)
 

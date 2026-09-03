@@ -27,7 +27,7 @@
     "egm96-universal": "^1.1.1",
     "express": "^4.21.2",
     "gopro-telemetry": "^1.2.11",
-    "leaflet": "^1.9.4",
+    "maplibre-gl": "^5.24.0",
     "uplot": "^1.6.31"
   },
   "devDependencies": {

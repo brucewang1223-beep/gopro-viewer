@@ -12,7 +12,8 @@ Spec and design decisions: [`docs/SPEC.md`](docs/SPEC.md).
 
 Node.js ≥ 20 (tested on 22 and 24). A browser that decodes your footage:
 H.264 (`GH…` files) plays everywhere; HEVC (`GX…` files) plays in Safari and in
-Chrome on Apple Silicon Macs. Map tiles need internet access; everything else works offline.
+Chrome on Apple Silicon Macs. The basemap needs internet access and a K2 map token
+(see below); everything else works offline.
 
 ## Quick start
 
@@ -25,6 +26,18 @@ npm start -- --media /Volumes/GOPRO/DCIM
 
 You can also add folders from the header bar in the UI (persisted to `config.json`),
 or create `config.json` from `config.example.json`. All options: `npm start -- --help`.
+
+The basemap comes from the K2 map service (`map.lumobility.com`). Put your token in the
+`map` block of `config.json` — that file is git-ignored, and the server signs every tile
+request itself, so the token never reaches the browser and never lands in a style file:
+
+```json
+"map": { "token": "…", "basemap": "streets", "labels": true }
+```
+
+Without a token the app still runs; the map pane stays empty and says so. K2 covers the
+UAE in detail (vector to z14, imagery to z19) and the rest of the world coarsely (vector
+to z7, imagery to z12), so footage shot far outside the UAE has no basemap when zoomed in.
 
 Try it without a camera: `npm run samples` downloads GoPro's public sample clips into
 `samples/`, then `npm start -- --media samples`.
@@ -51,9 +64,12 @@ The video, map, HUD and charts share one timeline: click anywhere on the map tra
 chart or the timeline bar to seek; drag on a chart to zoom (double-click resets).
 The map fits the whole route when a recording is selected; the travelled part is drawn in
 blue and the remaining part in grey, the pulsing arrow is the current position. Zoom and
-pan freely — the first button under the zoom control (or `F`) fits the whole route again,
-the second centres on the current position. "Speed colours" switches the route to a
-speed-coloured rendering with the remaining part dimmed.
+pan freely — the first button top-left (or `F`) fits the whole route again, the second
+centres on the current position. "Speed colours" switches the route to a speed-coloured
+rendering with the remaining part dimmed. The card at the bottom-left switches between
+the **Map** (K2 vector) and **Satellite** (K2 imagery) basemaps — `B` cycles them — and
+the Labels chip on the satellite card hides the place and road labels over the imagery.
+The choice is remembered per browser; `config.json` only sets the first-run default.
 
 | Key | Action |
 | --- | --- |
@@ -64,6 +80,7 @@ speed-coloured rendering with the remaining part dimmed.
 | `Home` / `End` | start / end |
 | `M` (or `L`) | toggle map follow |
 | `F` | fit map to track |
+| `B` | switch basemap (Map ↔ Satellite) |
 | `H` | toggle HUD |
 | `G` | toggle gauges (G-force ball, gyro ball, attitude bubble) |
 | double-click video | fullscreen |
@@ -111,9 +128,11 @@ Multiple files are treated as consecutive chapters of one recording.
 server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header, sensor
           orientation), gpmf-probe.js (scan-time GPS fix probe), decode.js (gopro-telemetry
           wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), app.js
-          (routes), export.js (GPX/GeoJSON/CSV), geo.js, config.js, json-cache.js, ids.js, log.js, index.js
-web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player, map,
-          charts, timeline, track, motion, gauges, hud, stats, library, util, api
+          (routes), export.js (GPX/GeoJSON/CSV), map.js (K2 tile + glyph proxy), geo.js,
+          config.js, json-cache.js, ids.js, log.js, index.js
+web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player,
+          map (+ map-route, map-controls, map-shields), charts, timeline, track, motion, gauges, hud,
+          stats, library, util, api; styles/ holds the two K2 MapLibre styles
 tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md)
 scripts/  dump-telemetry.js (CLI), fetch-samples.sh, macos-launch-agent.sh (run at login)
 docs/     SPEC.md
@@ -123,7 +142,7 @@ docs/     SPEC.md
 ## Development
 
 ```bash
-npm test          # 28 tests: demuxer, library, telemetry, exports, HTTP API, GeoJSON import
+npm test          # 40 tests: demuxer, library, telemetry, exports, HTTP API, map proxy, route geometry
 npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>
@@ -140,5 +159,6 @@ delete `.cache/`.
 ## Credits
 
 Telemetry decoding by [gopro-telemetry](https://github.com/JuanIrache/gopro-telemetry)
-(MIT), altitude correction by egm96-universal, maps by Leaflet, charts by uPlot.
+(MIT), altitude correction by egm96-universal, map rendering by MapLibre GL JS with
+basemaps and styles from K2 Maps (map.lumobility.com), charts by uPlot.
 Test fixtures derive from GoPro's public samples in gopro/gpmf-parser (Apache-2.0).

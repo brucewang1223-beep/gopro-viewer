@@ -6,5 +6,11 @@
     "/Users/brucewang/Movies/GoPro"
   ],
   "accelHz": 25,
-  "tiles": "osm"
+  "map": {
+    "api": "https://map.lumobility.com/api",
+    "glyphs": "https://map.lumobility.com/map-styles",
+    "token": "your-k2-map-token",
+    "basemap": "streets",
+    "labels": true
+  }
 }

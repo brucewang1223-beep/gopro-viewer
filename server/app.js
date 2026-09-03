@@ -3,7 +3,7 @@
  *
  * Routes
  *   GET  /api/health
- *   GET  /api/config                       roots, port, cache dir, tiles preference
+ *   GET  /api/config                       roots, port, cache dir, basemap preference
  *   POST /api/roots        {path}          add a media root (persisted to config.json) and rescan
  *   DELETE /api/roots/:id                  remove a root and rescan
  *   POST /api/rescan
@@ -14,7 +14,9 @@
  *   GET  /api/recordings/:id/export.gpx
  *   GET  /api/recordings/:id/export.geojson    driven route as a FeatureCollection of LineStrings
  *   GET  /api/recordings/:id/export.csv?stream=gps|accl|gyro
- *   /  , /vendor/leaflet/*, /vendor/uplot/*   static UI + vendored libraries from node_modules
+ *   GET  /api/map/*                        K2 map tiles / TileJSON (token added server-side)
+ *   GET  /api/map-fonts/*                  K2 glyph ranges
+ *   /  , /vendor/maplibre/*, /vendor/uplot/*  static UI + vendored libraries from node_modules
  */
 
 import express from 'express';
@@ -25,6 +27,7 @@ import { PROJECT_ROOT, saveConfig } from './config.js';
 import { Library } from './library.js';
 import { TelemetryService } from './telemetry.js';
 import { toGpx, toCsv, toGeoJson } from './export.js';
+import { tileProxy, fontProxy } from './map.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
 
@@ -84,8 +87,10 @@ function libraryRoutes(router, { cfg, library }) {
 
   router.get('/health', (req, res) => res.json({ ok: true, name: 'gopro-viewer', node: process.version, scannedAt: library.scannedAt }));
   router.get('/config', (req, res) => {
-    const { host, port, cacheDir, accelHz, tiles } = cfg;
-    res.json({ host, port, cacheDir, accelHz, tiles, roots: library.rootRecords() });
+    const { host, port, cacheDir, accelHz, map } = cfg;
+    // the map token stays on the server: the UI only needs to know whether one is set
+    const mapInfo = { basemap: map.basemap, labels: map.labels, configured: !!map.token };
+    res.json({ host, port, cacheDir, accelHz, map: mapInfo, roots: library.rootRecords() });
   });
   router.post('/roots', asyncRoute(async (req, res) => {
     const dir = await resolveDirectory(req.body?.path);
@@ -166,12 +171,14 @@ export function createApp(cfg) {
   libraryRoutes(api, { cfg, library });
   mediaRoutes(api, { library });
   telemetryRoutes(api, { library, telemetry });
+  api.use('/map', tileProxy(cfg.map));
+  api.use('/map-fonts', fontProxy(cfg.map));
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '64kb' }));
   app.use(requestLogger);
   app.use('/api', api);
-  app.use('/vendor/leaflet', express.static(vendorDir('leaflet'), { maxAge: '7d' }));
+  app.use('/vendor/maplibre', express.static(vendorDir('maplibre-gl'), { maxAge: '7d' }));
   app.use('/vendor/uplot', express.static(vendorDir('uplot'), { maxAge: '7d' }));
   // UI files: always revalidate so a plain reload picks up updates (vendor libs above stay cached).
   app.use(express.static(path.join(PROJECT_ROOT, 'web'), { etag: true, lastModified: true, setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));

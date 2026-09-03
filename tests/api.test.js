@@ -10,7 +10,7 @@ let server; let base; let tmp;
 
 before(async () => {
   tmp = await mkdtemp(path.join(os.tmpdir(), 'gopro-viewer-api-'));
-  const cfg = { host: '127.0.0.1', port: 0, roots: [FIXTURES], cacheDir: path.join(tmp, 'cache'), configFile: path.join(tmp, 'config.json'), accelHz: 25, tiles: 'osm', logLevel: 'warn' };
+  const cfg = { host: '127.0.0.1', port: 0, roots: [FIXTURES], cacheDir: path.join(tmp, 'cache'), configFile: path.join(tmp, 'config.json'), accelHz: 25, map: { api: 'https://map.example/api', glyphs: 'https://map.example/styles', token: '', basemap: 'streets', labels: true }, logLevel: 'warn' };
   const app = createApp(cfg);
   server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.on('listening', r));
@@ -118,7 +118,7 @@ test('UI and vendor assets are served', async () => {
   assert.equal(index.status, 200);
   assert.match(index.headers.get('content-type'), /text\/html/);
   assert.ok((await index.text()).includes('GoPro Viewer'));
-  for (const p of ['/vendor/leaflet/leaflet.js', '/vendor/leaflet/leaflet.css', '/vendor/uplot/uPlot.iife.min.js', '/vendor/uplot/uPlot.min.css', '/js/app.js', '/style.css']) {
+  for (const p of ['/vendor/maplibre/maplibre-gl.js', '/vendor/maplibre/maplibre-gl.css', '/vendor/uplot/uPlot.iife.min.js', '/vendor/uplot/uPlot.min.css', '/js/app.js', '/style.css', '/styles/k2-streets.json', '/styles/k2-satellite.json']) {
     const r = await fetch(base + p);
     assert.equal(r.status, 200, p);
   }

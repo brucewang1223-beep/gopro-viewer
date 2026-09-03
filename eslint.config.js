@@ -26,7 +26,7 @@ export default [
   },
   {
     files: ['web/js/**/*.js'],
-    languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.browser, L: 'readonly', uPlot: 'readonly' } },
+    languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.browser, maplibregl: 'readonly', uPlot: 'readonly' } },
     rules,
   },
   {
