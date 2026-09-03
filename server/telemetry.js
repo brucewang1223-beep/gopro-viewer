@@ -13,6 +13,7 @@ import path from 'node:path';
 import { readMp4Info, readGpmfTrack } from './mp4.js';
 import { readStreamOrientations, cameraFrameMapping, headerSettingsSummary } from './gpmf-klv.js';
 import { decodeTelemetry, devicesOf } from './decode.js';
+import { haversineM, hasPosition } from './geo.js';
 import { readJsonCache, writeJsonCache } from './json-cache.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
@@ -170,22 +171,6 @@ export async function parseChapter(filePath, { accelHz = 25 } = {}) {
 }
 
 /* ---------- stats ---------- */
-
-const R_EARTH = 6371008.8;
-
-function haversineM(lat1, lon1, lat2, lon2) {
-  const toRad = Math.PI / 180;
-  const dLat = (lat2 - lat1) * toRad; const dLon = (lon2 - lon1) * toRad;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
-  return 2 * R_EARTH * Math.asin(Math.min(1, Math.sqrt(a)));
-}
-
-/** Whether GPS sample i carries a usable position (fix at least `minFix`, coordinates present). */
-export function hasPosition(gps, i, minFix = 2) {
-  const fix = gps.fix[i];
-  if (fix != null && fix < minFix) return false;
-  return gps.lat[i] != null && gps.lon[i] != null;
-}
 
 function emptyStats(totalPoints) {
   return {

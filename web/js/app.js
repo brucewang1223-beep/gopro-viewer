@@ -19,7 +19,7 @@ import { fmtTime, padL, el } from './util.js';
 const $ = (id) => document.getElementById(id);
 const HUD_INTERVAL_MS = 80; // ~12 Hz is plenty for text
 const SKIP_STORAGE_KEY = 'gopro-viewer.skipStep';
-const EXPORTS = [['export-gpx', 'gpx'], ['export-csv', 'csv', 'gps'], ['export-accl', 'csv', 'accl']];
+const EXPORTS = [['export-gpx', 'gpx'], ['export-geojson', 'geojson'], ['export-csv', 'csv', 'gps'], ['export-accl', 'csv', 'accl']];
 
 const state = { recording: null, track: null, motion: null };
 let skipStep = 5;

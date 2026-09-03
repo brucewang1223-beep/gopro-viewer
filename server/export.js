@@ -1,9 +1,10 @@
 /**
- * Export helpers: GPX 1.1 track and CSV tables from merged recording telemetry.
- * Points with fix < minFix (default 2) are excluded from GPX; CSV keeps everything and includes the fix column.
+ * Export helpers: GPX 1.1 track, GeoJSON FeatureCollection and CSV tables from merged
+ * recording telemetry. Points with fix < minFix (default 2) are excluded from GPX and
+ * GeoJSON; CSV keeps every sample and includes the fix column.
  */
 
-import { hasPosition } from './telemetry.js';
+import { haversineM, hasPosition, positionRuns } from './geo.js';
 
 const GPS_COLUMNS = ['t_sec', 'utc_iso', 'lat', 'lon', 'alt_m', 'speed2d_ms', 'speed3d_ms', 'fix', 'dop'];
 const GPX_HEAD = '<gpx version="1.1" creator="gopro-viewer" xmlns="http://www.topografix.com/GPX/1/1"'
@@ -45,6 +46,110 @@ export function toGpx(tel, { minFix = 2 } = {}) {
   ];
   return lines.join('\n') + '\n';
 }
+
+/* ---------- GeoJSON ---------- */
+
+const COORD_DECIMALS = 7;  // ~11 mm, past GPS precision
+const round = (v, d) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
+
+/** [lon, lat] or [lon, lat, alt] — GeoJSON positions are x, y, z. */
+function position(gps, i) {
+  const p = [round(gps.lon[i], COORD_DECIMALS), round(gps.lat[i], COORD_DECIMALS)];
+  if (gps.alt[i] != null) p.push(round(gps.alt[i], 2));
+  return p;
+}
+
+/** Per-run geometry plus the parallel per-point arrays kept in coordinateProperties. */
+function runGeometry(gps, run) {
+  const coordinates = []; const times = []; const speeds = [];
+  let distanceM = 0; let maxSpeedMs = 0; let speedSum = 0; let prev = -1;
+  for (let i = run.start; i <= run.end; i++) {
+    if (!hasPosition(gps, i)) continue;
+    coordinates.push(position(gps, i));
+    times.push(gps.utc[i] != null ? iso(gps.utc[i]) : null);
+    const speed = gps.speed2d[i] ?? null;
+    speeds.push(speed);
+    maxSpeedMs = Math.max(maxSpeedMs, speed ?? 0);
+    speedSum += speed ?? 0;
+    if (prev >= 0) distanceM += haversineM(gps.lat[prev], gps.lon[prev], gps.lat[i], gps.lon[i]);
+    prev = i;
+  }
+  const n = coordinates.length;
+  return {
+    coordinates, times, speeds, n,
+    distanceM: round(distanceM, 2),
+    durationSec: round(gps.t[run.end] - gps.t[run.start], 3),
+    maxSpeedMs: round(maxSpeedMs, 3),
+    avgSpeedMs: n ? round(speedSum / n, 3) : 0,
+  };
+}
+
+const stabilizationLabel = (stab) => {
+  if (!stab) return null;
+  return stab.enabled ? (stab.mode || 'On') : 'Off';
+};
+
+function cameraProperties(tel) {
+  return {
+    camera: tel.camera?.model ?? tel.settings?.model ?? null,
+    firmware: tel.camera?.firmware ?? null,
+    fov: tel.settings?.fov?.name ?? null,
+    hyperSmooth: stabilizationLabel(tel.settings?.stabilization),
+  };
+}
+
+/** Recording-level properties repeated on every feature so each one stands alone in GIS tools. */
+function recordingProperties(tel) {
+  return {
+    recording: tel.name ?? null,
+    recordingId: tel.recordingId ?? null,
+    gpsSource: tel.gps?.source ?? null,
+    altitudeSystem: tel.gps?.altitudeSystem ?? null,
+    ...cameraProperties(tel),
+  };
+}
+
+function runFeature(tel, gps, run, index, runCount) {
+  const geom = runGeometry(gps, run);
+  const suffix = runCount > 1 ? ` (${index + 1}/${runCount})` : '';
+  return {
+    type: 'Feature',
+    properties: {
+      name: `${tel.name ?? 'GoPro track'}${suffix}`,
+      ...recordingProperties(tel),
+      points: geom.n,
+      distanceM: geom.distanceM,
+      durationSec: geom.durationSec,
+      maxSpeedMs: geom.maxSpeedMs,
+      avgSpeedMs: geom.avgSpeedMs,
+      startTime: geom.times[0] ?? null,
+      endTime: geom.times[geom.times.length - 1] ?? null,
+      videoStartSec: round(gps.t[run.start], 3),
+      videoEndSec: round(gps.t[run.end], 3),
+      // parallel arrays, one entry per coordinate (the convention used by togeojson)
+      coordinateProperties: { times: geom.times, speeds: geom.speeds },
+    },
+    geometry: { type: 'LineString', coordinates: geom.coordinates },
+  };
+}
+
+/**
+ * The driven route as a GeoJSON FeatureCollection: one LineString feature per contiguous
+ * run of positioned samples (a lost fix or a gap longer than `maxGapSec` starts a new one),
+ * with altitude as the third ordinate and per-point times/speeds in `coordinateProperties`.
+ * @param {object} tel merged telemetry
+ * @param {{ minFix?: number, maxGapSec?: number }} [opts]
+ */
+export function toGeoJson(tel, { minFix = 2, maxGapSec = 5 } = {}) {
+  const gps = tel.gps;
+  const runs = gps ? positionRuns(gps, { minFix, maxGapSec }) : [];
+  const features = runs
+    .map((run, i) => runFeature(tel, gps, run, i, runs.length))
+    .filter((f) => f.geometry.coordinates.length > 1);
+  return JSON.stringify({ type: 'FeatureCollection', features }, null, 1) + '\n';
+}
+
+/* ---------- CSV ---------- */
 
 function csvTable(header, rows) {
   const lines = [header.join(',')];

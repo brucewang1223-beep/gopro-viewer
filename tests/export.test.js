@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toGpx, toCsv } from '../server/export.js';
+import { toGpx, toCsv, toGeoJson } from '../server/export.js';
+import { parseGeoJson, describeFeatures } from '../web/js/geojson.js';
 
 const tel = {
   name: 'GX0001 <test>',
@@ -23,6 +24,49 @@ test('toGpx writes only fixed points, escapes names and includes ele/time/speed'
   assert.ok(gpx.includes('<ele>10</ele><time>2018-01-24T19:27:58.000Z</time>'));
   assert.ok(gpx.includes('<gpxtpx:speed>2</gpxtpx:speed>'));
   assert.ok(gpx.trim().endsWith('</gpx>'));
+});
+
+test('toGeoJson writes one LineString per positioned run with altitude and per-point arrays', () => {
+  const fc = JSON.parse(toGeoJson(tel));
+  assert.equal(fc.type, 'FeatureCollection');
+  assert.equal(fc.features.length, 1);
+  const f = fc.features[0];
+  assert.equal(f.geometry.type, 'LineString');
+  assert.deepEqual(f.geometry.coordinates, [[-117.3, 33.1, 10], [-117.3002, 33.1002, 11]], 'lon, lat, alt; no-fix point excluded');
+  assert.equal(f.properties.name, 'GX0001 <test>');
+  assert.equal(f.properties.camera, 'Hero6 Black');
+  assert.equal(f.properties.points, 2);
+  assert.equal(f.properties.startTime, '2018-01-24T19:27:58.000Z');
+  assert.equal(f.properties.endTime, '2018-01-24T19:27:59.000Z');
+  assert.equal(f.properties.maxSpeedMs, 2);
+  assert.ok(f.properties.distanceM > 0);
+  assert.deepEqual(f.properties.coordinateProperties.speeds, [1, 2]);
+  assert.equal(f.properties.coordinateProperties.times.length, f.geometry.coordinates.length);
+});
+
+test('toGeoJson splits runs on time gaps and skips recordings without a fix', () => {
+  const gapped = {
+    ...tel,
+    gps: {
+      n: 4, t: [0, 1, 30, 31],
+      lat: [33.1, 33.1001, 33.2, 33.2001], lon: [-117.3, -117.3001, -117.4, -117.4001], alt: [10, 11, 12, 13],
+      speed2d: [1, 2, 3, 4], speed3d: [1, 2, 3, 4], fix: [3, 3, 3, 3], dop: [1, 1, 1, 1],
+      utc: [0, 1000, 30000, 31000],
+    },
+  };
+  const features = JSON.parse(toGeoJson(gapped)).features;
+  assert.equal(features.length, 2, 'a 29 s gap starts a new run');
+  assert.deepEqual(features.map((f) => f.properties.name), ['GX0001 <test> (1/2)', 'GX0001 <test> (2/2)']);
+  assert.equal(features[1].geometry.coordinates.length, 2);
+
+  const noFix = { ...tel, gps: { ...tel.gps, fix: [0, 0, 0] } };
+  assert.deepEqual(JSON.parse(toGeoJson(noFix)).features, []);
+  assert.deepEqual(JSON.parse(toGeoJson({ ...tel, gps: null })).features, []);
+});
+
+test('exported GeoJSON is valid input for the map importer (round trip)', () => {
+  const fc = parseGeoJson(toGeoJson(tel), 'GX0001.geojson');
+  assert.equal(describeFeatures(fc.features), '1 line');
 });
 
 test('toCsv gps keeps every sample with fix and dop columns', () => {

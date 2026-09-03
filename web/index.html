@@ -85,9 +85,10 @@
         <label class="ctl toggle" title="Show telemetry overlay on the video (H)"><input type="checkbox" id="hud-toggle" checked> HUD</label>
         <label class="ctl toggle" title="Show G-force / gyro / attitude gauges on the video (G)"><input type="checkbox" id="gauges-toggle" checked> Gauges</label>
         <span class="ctl links export">Export
-          <a id="export-gpx" class="btn btn-ghost" href="#" download>GPX</a>
-          <a id="export-csv" class="btn btn-ghost" href="#" download>CSV</a>
-          <a id="export-accl" class="btn btn-ghost" href="#" download>IMU</a>
+          <a id="export-gpx" class="btn btn-ghost disabled" href="#" download>GPX</a>
+          <a id="export-geojson" class="btn btn-ghost disabled" href="#" download title="Driven route as GeoJSON (LineString per run, altitude, per-point times and speeds)">GeoJSON</a>
+          <a id="export-csv" class="btn btn-ghost disabled" href="#" download>CSV</a>
+          <a id="export-accl" class="btn btn-ghost disabled" href="#" download>IMU</a>
         </span>
         <span class="ctl links">Import
           <button type="button" id="import-geojson" class="btn btn-ghost" title="Show a GeoJSON file on the map (zones, routes, points) — you can also drop the file onto the map">GeoJSON</button>

@@ -85,6 +85,16 @@ with gravity removed (0 at rest, ~0.2–0.3 g in normal braking, 0.5 g is a hard
 with the dominant direction. Playback is always muted: this is a telemetry review tool, not a
 media player, so the audio track is never rendered.
 
+### Export
+
+*Export* gives the selected recording as **GPX** (fixed track points with elevation, time and
+speed), **GeoJSON**, **CSV** (every GPS sample incl. fix and DOP) or **IMU** CSV (25 Hz
+accelerometer). The GeoJSON is a `FeatureCollection` with one `LineString` per contiguous run of
+positioned samples — a lost fix or a gap over 5 s starts a new one — with altitude as the third
+ordinate, per-run statistics and camera settings in `properties`, and per-point `times` / `speeds`
+arrays in `properties.coordinateProperties`. It opens directly in QGIS, kepler.gl or geopandas,
+and can be dropped back onto this map as an overlay.
+
 ### Import GeoJSON overlays
 
 *Import → GeoJSON* (or drop a `.geojson` / `.json` file onto the map) draws operating zones,
@@ -110,7 +120,7 @@ Multiple files are treated as consecutive chapters of one recording.
 server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header, sensor
           orientation), gpmf-probe.js (scan-time GPS fix probe), decode.js (gopro-telemetry
           wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), app.js
-          (routes), export.js, config.js, json-cache.js, ids.js, log.js, index.js
+          (routes), export.js (GPX/GeoJSON/CSV), geo.js, config.js, json-cache.js, ids.js, log.js, index.js
 web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player, map,
           overlays + geojson (imported layers), charts, timeline, track, motion, gauges, hud, stats, library, util, api
 tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md)
@@ -122,7 +132,7 @@ docs/     SPEC.md
 ## Development
 
 ```bash
-npm test          # 28 tests: demuxer, library, telemetry, exports, HTTP API, GeoJSON import
+npm test          # 31 tests: demuxer, library, telemetry, exports, HTTP API, GeoJSON import
 npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>

@@ -12,6 +12,7 @@
  *   GET  /api/thumb/:fileId                THM/JPEG thumbnail
  *   GET  /api/recordings/:id/telemetry     merged, normalised telemetry JSON
  *   GET  /api/recordings/:id/export.gpx
+ *   GET  /api/recordings/:id/export.geojson    driven route as a FeatureCollection of LineStrings
  *   GET  /api/recordings/:id/export.csv?stream=gps|accl|gyro
  *   /  , /vendor/leaflet/*, /vendor/uplot/*   static UI + vendored libraries from node_modules
  */
@@ -23,7 +24,7 @@ import { createRequire } from 'node:module';
 import { PROJECT_ROOT, saveConfig } from './config.js';
 import { Library } from './library.js';
 import { TelemetryService } from './telemetry.js';
-import { toGpx, toCsv } from './export.js';
+import { toGpx, toCsv, toGeoJson } from './export.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
 
@@ -139,6 +140,11 @@ function telemetryRoutes(router, { library, telemetry }) {
     res.setHeader('Content-Type', 'application/gpx+xml; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${rec.name}.gpx"`);
     res.send(toGpx(await telemetry.recordingTelemetry(rec)));
+  }));
+  router.get('/recordings/:id/export.geojson', withRecording(async (req, res, rec) => {
+    res.setHeader('Content-Type', 'application/geo+json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${rec.name}.geojson"`);
+    res.send(toGeoJson(await telemetry.recordingTelemetry(rec)));
   }));
   router.get('/recordings/:id/export.csv', withRecording(async (req, res, rec) => {
     const stream = CSV_STREAMS.includes(req.query.stream) ? req.query.stream : 'gps';
