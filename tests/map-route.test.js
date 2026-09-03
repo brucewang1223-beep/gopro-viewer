@@ -76,3 +76,25 @@ test('progress colouring uses the two route colours, speed colouring many', () =
   assert.ok(speed.size > 3, `expected a speed ramp, got ${speed.size} colours`);
   assert.ok(!speed.has(ROUTE.travelled));
 });
+
+test('gradient stops stay strictly ascending for every cut position', () => {
+  const run = buildRoute(track(straight(40).map((p, i) => [p[0], p[1], p[2], i % 11]))).runs[0];
+  for (const colorBySpeed of [false, true]) {
+    for (const progress of [0, 1e-9, 5e-5, 0.0001, 0.25, 0.5, 0.9999, 1 - 1e-9, 1, 1.5, -0.2]) {
+      const stops = stopsOf(runGradient(run, { colorBySpeed, progress }));
+      assert.ok(stops.length >= 2, `cut ${progress}: needs two stops`);
+      assert.equal(stops[0][0], 0, `cut ${progress}: starts at 0`);
+      assert.ok(stops.at(-1)[0] <= 1, `cut ${progress}: ends within 1`);
+      for (let i = 1; i < stops.length; i++) {
+        assert.ok(stops[i][0] > stops[i - 1][0], `cut ${progress}: stop ${i} (${stops[i][0]}) must exceed ${stops[i - 1][0]}`);
+      }
+    }
+  }
+});
+
+test('a track without a usable fix produces no runs', () => {
+  const route = buildRoute(track([[0, 24.45, 54.6, 0]]));
+  assert.deepEqual(route.runs, []);
+  assert.equal(route.bounds, null);
+  assert.equal(route.geojson.features.length, 0);
+});

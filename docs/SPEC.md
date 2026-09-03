@@ -1,6 +1,6 @@
 # GoPro Viewer — Specification (v0.1)
 
-Status: implemented (v0.1.0). This document is the single source of truth for scope,
+Status: implemented (v0.2.0 — K2 basemaps). This document is the single source of truth for scope,
 architecture, data contracts and acceptance criteria. Change the spec first, then the code.
 
 ## 1. Purpose
@@ -222,7 +222,7 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 
 ## 8. Acceptance criteria (v0.1)
 
-1. `npm test` passes (28 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
+1. `npm test` passes (42 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming, map proxy path whitelist and token signing, route geometry and gradients) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
 2. Pointing the app at a folder of GoPro files lists every recording with correct chapter grouping and duration; scanning 500 files completes in seconds (moov-only reads, cached).
 3. Selecting a recording with GPS shows the track on the map, the HUD and charts populate, and pressing play moves the marker along the track in step with the video; the marker never draws through no-fix segments.
 4. Clicking on the map track, a chart or the timeline seeks the video (across chapters) and all views stay consistent.

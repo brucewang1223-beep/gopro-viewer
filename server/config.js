@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Basemaps offered by the UI; the matching style lives in web/styles/k2-<name>.json. */
-export const BASEMAPS = ['streets', 'satellite'];
+const BASEMAPS = ['streets', 'satellite'];
 
 const DEFAULTS = Object.freeze({
   host: '127.0.0.1',

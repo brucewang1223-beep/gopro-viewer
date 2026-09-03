@@ -37,8 +37,8 @@ function drawShield(kind, w, h) {
   return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
-/** Blue falcon-wing shield used for E-roads. */
-function drawEmirateShield(ctx, w, h) {
+/** Outline of the blue falcon-wing shield used for E-roads. */
+function emirateShieldPath(w, h) {
   const cx = w / 2;
   const left = 3.2;
   const right = w - 3.2;
@@ -58,6 +58,13 @@ function drawEmirateShield(ctx, w, h) {
   shield.lineTo(left + 5.1, top + 7.9);
   shield.bezierCurveTo(left + 8.2, top + 7.3, cx - 11.4, top + 6.2, cx - 7.2, top + 1.2);
   shield.closePath();
+  return shield;
+}
+
+function drawEmirateShield(ctx, w, h) {
+  const cx = w / 2;
+  const top = 7;
+  const shield = emirateShieldPath(w, h);
 
   ctx.shadowColor = 'rgba(18, 42, 66, 0.22)';
   ctx.shadowBlur = 1.5;

@@ -142,7 +142,7 @@ docs/     SPEC.md
 ## Development
 
 ```bash
-npm test          # 40 tests: demuxer, library, telemetry, exports, HTTP API, map proxy, route geometry
+npm test          # 42 tests: demuxer, library, telemetry, exports, HTTP API, map proxy, route geometry
 npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>

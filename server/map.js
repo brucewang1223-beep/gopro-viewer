@@ -19,18 +19,19 @@ const log = createLogger('map');
 
 const TILE_PATH = /^\/v2\/tiles\/[\w-]{1,40}(\/\d{1,2}\/\d{1,7}\/\d{1,7}\.(pbf|png|jpe?g|webp)|\.json)$/;
 const GLYPH_PATH = /^\/[\w%.-]{1,80}\/\d{1,6}-\d{1,6}\.pbf$/;
-const TILE_CACHE = 'public, max-age=604800';  // z/x/y addresses fixed content: a week in the browser cache
+const CACHE_CONTROL = 'public, max-age=604800';  // z/x/y addresses fixed content: a week in the browser cache
+const UPSTREAM_TIMEOUT_MS = 15_000;
 const ABORTED = new Set(['ERR_STREAM_PREMATURE_CLOSE', 'ECONNRESET', 'ERR_STREAM_DESTROYED', 'ABORT_ERR']);
 
 const withToken = (url, token) => (token ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` : url);
 
 /** Copy an upstream response (status, content type, body) to the client. */
 async function forward(url, res) {
-  const upstream = await fetch(url, { headers: { accept: '*/*' } });
+  const upstream = await fetch(url, { headers: { accept: '*/*' }, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) });
   const type = upstream.headers.get('content-type');
   res.status(upstream.status);
   if (type) res.setHeader('Content-Type', type);
-  res.setHeader('Cache-Control', upstream.ok ? TILE_CACHE : 'no-store');
+  res.setHeader('Cache-Control', upstream.ok ? CACHE_CONTROL : 'no-store');
   if (!upstream.body) return res.end();
   try {
     return await pipeline(Readable.fromWeb(upstream.body), res);

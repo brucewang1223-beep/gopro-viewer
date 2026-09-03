@@ -27,6 +27,9 @@ const DIM = 0.34;         // colour kept by the not-yet-driven part in speed mod
 const BACKDROP = [15, 17, 21];
 const EPS = 1e-4;         // smallest gap between two gradient stops
 
+/** Cut points within one stop-gap of an end belong to that end: no degenerate stops. */
+const snapCut = (p) => (p < EPS ? 0 : p > 1 - EPS ? 1 : p);
+
 /* ---------- geometry ---------- */
 
 /** Web-Mercator position in world units (x and y both span 1 across the globe). */
@@ -148,7 +151,7 @@ function rampColorAt(ramp, f) {
  * Colours stay geographically anchored: only the cut moves during playback.
  */
 export function spliceRamps(before, after, cut) {
-  const p = clamp(cut, 0, 1);
+  const p = snapCut(clamp(cut, 0, 1));
   const stops = [];
   if (p > 0) {
     stops.push([0, before[0][1]], ...before.filter(([f]) => f > 0 && f < p));
@@ -164,7 +167,10 @@ export function spliceRamps(before, after, cut) {
 /** MapLibre `line-gradient` expression for a step ramp. */
 export function gradientExpression(ramp) {
   const stops = [];
-  const push = (f, color) => { if (!stops.length || f > stops[stops.length - 1][0]) stops.push([Math.min(1, f), color]); };
+  const push = (at, color) => {
+    const f = Math.min(1, at);                       // compare after clamping, or 1 can be pushed twice
+    if (!stops.length || f > stops[stops.length - 1][0]) stops.push([f, color]);
+  };
   ramp.forEach(([f, color], i) => {
     if (i > 0) push(f, ramp[i - 1][1]);   // hold the previous colour right up to the step
     push(i === 0 ? 0 : f + EPS, color);

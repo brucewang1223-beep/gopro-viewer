@@ -14,14 +14,15 @@ import { installRoadShields } from './map-shields.js';
 import { ButtonsControl, BasemapControl, ICONS } from './map-controls.js';
 import { clamp } from './util.js';
 
-export const BASEMAPS = {
+const BASEMAPS = {
   streets: { label: 'Map', style: '/styles/k2-streets.json', shields: true },
   satellite: { label: 'Satellite', style: '/styles/k2-satellite.json', labelLayers: /-label$/ },
 };
 
 const SOURCE = 'route';
 const CASING_LAYER = 'route-casing';
-const runLayer = (r) => `route-run-${r}`;
+const RUN_LAYER = 'route-run-';
+const runLayer = (r) => RUN_LAYER + r;
 
 const LINE_WIDTH = ['interpolate', ['linear'], ['zoom'], 8, 2.2, 14, 4.5, 18, 6];
 const CASING_WIDTH = ['interpolate', ['linear'], ['zoom'], 8, 4.4, 14, 7.5, 18, 9.5];
@@ -150,17 +151,20 @@ export class TrackMap {
   /* ---------- route layers ---------- */
 
   #addRouteLayers() {
-    if (!this.route || this.map.getSource(SOURCE)) return;
+    if (!this.route || !this.styleReady || this.map.getSource(SOURCE)) return;
     this.map.addSource(SOURCE, { type: 'geojson', data: this.route.geojson, lineMetrics: true });
     this.map.addLayer({ id: CASING_LAYER, type: 'line', source: SOURCE, layout: LINE_LAYOUT, paint: { 'line-color': ROUTE.casing, 'line-width': CASING_WIDTH } });
-    this.route.runs.forEach((run, r) => this.map.addLayer({
-      id: runLayer(r),
-      type: 'line',
-      source: SOURCE,
-      filter: ['==', ['get', 'run'], r],
-      layout: LINE_LAYOUT,
-      paint: { 'line-width': LINE_WIDTH, 'line-gradient': runGradient(run, { colorBySpeed: this.colorBySpeed }) },
-    }));
+    this.route.runs.forEach((run, r) => {
+      this.progress[r] = this.#cutFor(r);
+      this.map.addLayer({
+        id: runLayer(r),
+        type: 'line',
+        source: SOURCE,
+        filter: ['==', ['get', 'run'], r],
+        layout: LINE_LAYOUT,
+        paint: { 'line-width': LINE_WIDTH, 'line-gradient': this.#gradient(run, this.progress[r]) },
+      });
+    });
     this.#routeEvents(true);
   }
 
@@ -168,27 +172,35 @@ export class TrackMap {
     if (!this.styleReady) return;
     this.#routeEvents(false);
     for (const id of this.map.getStyle().layers.map((l) => l.id)) {
-      if (id === CASING_LAYER || id.startsWith('route-run-')) this.map.removeLayer(id);
+      if (id === CASING_LAYER || id.startsWith(RUN_LAYER)) this.map.removeLayer(id);
     }
     if (this.map.getSource(SOURCE)) this.map.removeSource(SOURCE);
   }
 
+  /** Where the driven/undriven cut sits on run `r`: runs behind the cursor are whole. */
+  #cutFor(r) {
+    const { run, progress } = this.cursor;
+    return r < run ? 1 : r > run ? 0 : progress;
+  }
+
+  #gradient(run, cut) {
+    return runGradient(run, { colorBySpeed: this.colorBySpeed, progress: cut });
+  }
+
   /**
-   * Repaint the gradients so runs before the cursor read as driven, runs after it as
-   * not driven, and the current run is split where playback is. Throttled to 20 Hz;
-   * unchanged runs are skipped, so a normal frame touches a single layer.
+   * Move each run's gradient cut to where playback is. Throttled to 20 Hz, and runs
+   * whose cut has not moved are skipped, so a normal frame touches a single layer.
    */
   #paintProgress(force = false) {
     if (!this.route || !this.styleReady) return;
     const now = performance.now();
     if (!force && now - this.lastPaint < UPDATE_INTERVAL_MS) return;
     this.lastPaint = now;
-    const { run: current, progress } = this.cursor;
     this.route.runs.forEach((run, r) => {
-      const target = r < current ? 1 : r > current ? 0 : progress;
-      if (!force && Math.abs(target - this.progress[r]) < PROGRESS_EPS) return;
-      this.progress[r] = target;
-      this.map.setPaintProperty(runLayer(r), 'line-gradient', runGradient(run, { colorBySpeed: this.colorBySpeed, progress: target }));
+      const cut = this.#cutFor(r);
+      if (!force && Math.abs(cut - this.progress[r]) < PROGRESS_EPS) return;
+      this.progress[r] = cut;
+      this.map.setPaintProperty(runLayer(r), 'line-gradient', this.#gradient(run, cut));
     });
   }
 
@@ -202,10 +214,9 @@ export class TrackMap {
     this.marker.remove();
     this.#removeRouteLayers();
     if (!this.route?.runs.length) return;
-    this.#addRouteLayers();
+    this.#addRouteLayers();     // a no-op until the first style has loaded; #onStyleLoad retries
     this.position = this.route.runs[0].coordinates[0];
     this.marker.setLngLat(this.position).addTo(this.map);
-    this.#paintProgress(true);
     this.map.resize();
     this.fitTrack({ animate: false });
   }

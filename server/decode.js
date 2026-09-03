@@ -7,6 +7,10 @@ import { createRequire } from 'node:module';
 
 const goproTelemetry = createRequire(import.meta.url)('gopro-telemetry');
 
+// `egm96-universal` looks unused here: it is an optional peer dependency that
+// gopro-telemetry requires at run time to convert WGS84 ellipsoid heights to mean sea
+// level. Drop it from package.json and altitudes silently revert to ellipsoid heights.
+
 /**
  * Options for gopro-telemetry ("GPS" = best of GPS9/GPS5). A fresh object every time:
  * the library mutates `opts.stream` in place.

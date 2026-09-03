@@ -1,6 +1,6 @@
 {
   "name": "gopro-viewer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Local web app: GoPro video playback synchronised with embedded GPMF telemetry (GPS track, speed, altitude, IMU).",
   "private": true,
   "type": "module",
