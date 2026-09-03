@@ -1,0 +1,35 @@
+{
+  "name": "gopro-viewer",
+  "version": "0.1.0",
+  "description": "Local web app: GoPro video playback synchronised with embedded GPMF telemetry (GPS track, speed, altitude, IMU).",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "main": "server/index.js",
+  "bin": {
+    "gopro-viewer": "server/index.js"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test \"tests/**/*.test.js\"",
+    "lint": "eslint .",
+    "samples": "bash scripts/fetch-samples.sh",
+    "telemetry": "node scripts/dump-telemetry.js"
+  },
+  "dependencies": {
+    "egm96-universal": "^1.1.1",
+    "express": "^4.21.2",
+    "gopro-telemetry": "^1.2.11",
+    "leaflet": "^1.9.4",
+    "uplot": "^1.6.31"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.12.0"
+  }
+}

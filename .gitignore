@@ -1,0 +1,14 @@
+# project-local tooling
+node_modules/
+.npm-cache/
+.cache/
+
+# local configuration (media roots, port)
+config.json
+
+# optional full-length sample files downloaded by `npm run samples` (the trimmed test fixtures are committed)
+samples/
+
+# OS / editor
+.DS_Store
+*.log

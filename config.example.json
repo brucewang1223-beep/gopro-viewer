@@ -1,0 +1,10 @@
+{
+  "host": "127.0.0.1",
+  "port": 8790,
+  "roots": [
+    "/Volumes/GOPRO/DCIM",
+    "/Users/brucewang/Movies/GoPro"
+  ],
+  "accelHz": 25,
+  "tiles": "osm"
+}
