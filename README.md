@@ -92,16 +92,7 @@ speed), **GeoJSON**, **CSV** (every GPS sample incl. fix and DOP) or **IMU** CSV
 accelerometer). The GeoJSON is a `FeatureCollection` with one `LineString` per contiguous run of
 positioned samples — a lost fix or a gap over 5 s starts a new one — with altitude as the third
 ordinate, per-run statistics and camera settings in `properties`, and per-point `times` / `speeds`
-arrays in `properties.coordinateProperties`. It opens directly in QGIS, kepler.gl or geopandas,
-and can be dropped back onto this map as an overlay.
-
-### Import GeoJSON overlays
-
-*Import → GeoJSON* (or drop a `.geojson` / `.json` file onto the map) draws operating zones,
-planned routes or points of interest underneath the recording's route. Each file becomes a layer
-listed in the map's top-right panel — untick to hide, ⤢ to zoom to it, ✕ to remove; click a
-feature for its properties. Files must be WGS84 longitude/latitude (a FeatureCollection, a single
-Feature or a bare geometry); layers stay when you switch recordings.
+arrays in `properties.coordinateProperties`. It opens directly in QGIS, kepler.gl or geopandas.
 
 ## Command-line extraction
 
@@ -122,7 +113,7 @@ server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header,
           wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), app.js
           (routes), export.js (GPX/GeoJSON/CSV), geo.js, config.js, json-cache.js, ids.js, log.js, index.js
 web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player, map,
-          overlays + geojson (imported layers), charts, timeline, track, motion, gauges, hud, stats, library, util, api
+          charts, timeline, track, motion, gauges, hud, stats, library, util, api
 tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md)
 scripts/  dump-telemetry.js (CLI), fetch-samples.sh, macos-launch-agent.sh (run at login)
 docs/     SPEC.md
@@ -132,7 +123,7 @@ docs/     SPEC.md
 ## Development
 
 ```bash
-npm test          # 31 tests: demuxer, library, telemetry, exports, HTTP API, GeoJSON import
+npm test          # 28 tests: demuxer, library, telemetry, exports, HTTP API, GeoJSON import
 npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>

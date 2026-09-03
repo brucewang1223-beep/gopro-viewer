@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toGpx, toCsv, toGeoJson } from '../server/export.js';
-import { parseGeoJson, describeFeatures } from '../web/js/geojson.js';
 
 const tel = {
   name: 'GX0001 <test>',
@@ -62,11 +61,6 @@ test('toGeoJson splits runs on time gaps and skips recordings without a fix', ()
   const noFix = { ...tel, gps: { ...tel.gps, fix: [0, 0, 0] } };
   assert.deepEqual(JSON.parse(toGeoJson(noFix)).features, []);
   assert.deepEqual(JSON.parse(toGeoJson({ ...tel, gps: null })).features, []);
-});
-
-test('exported GeoJSON is valid input for the map importer (round trip)', () => {
-  const fc = parseGeoJson(toGeoJson(tel), 'GX0001.geojson');
-  assert.equal(describeFeatures(fc.features), '1 line');
 });
 
 test('toCsv gps keeps every sample with fix and dop columns', () => {

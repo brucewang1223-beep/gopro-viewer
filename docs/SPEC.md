@@ -32,7 +32,6 @@ speed" matters. Secondary use: exporting the telemetry (GPX / CSV) for offline a
 | Skip step | ← / → and the −/+ buttons skip a user-selectable number of seconds (1–60, persisted in `localStorage`); Shift multiplies by 6. |
 | Layout stability | Every live readout (HUD cells, gauge captions, time display, chart hover readouts) is written at a constant character width in a monospace font with tabular numerals and `white-space: pre`, so nothing reflows or jitters during playback. |
 | Stats | Distance, max/avg speed, moving time, elevation gain/loss, fix-quality histogram, camera model/firmware, UTC start. |
-| Import (overlays) | GeoJSON files (FeatureCollection / Feature / geometry, WGS84) drawn on the map beneath the route in a distinct colour per file: polygons filled, lines, points as circle markers; feature properties in a popup. Layer panel (top-right of the map) with hide / zoom-to / remove; drag-and-drop onto the map; layers persist across recordings. Client-side only (`web/js/geojson.js` pure parsing, `web/js/overlays.js` Leaflet layer + panel). |
 | Export | GPX 1.1 (fixed points only, with ele/time/speed), GeoJSON and CSV (GPS, accelerometer, gyroscope). GeoJSON is a `FeatureCollection` of `LineString` features, one per contiguous run of positioned samples (split on lost fix or a gap > 5 s), positions as `[lon, lat, alt]`, per-run stats + camera/settings in `properties`, per-point `times`/`speeds` in `properties.coordinateProperties` (the togeojson convention). CLI `scripts/dump-telemetry.js` for headless extraction. |
 | Config | Media roots via UI (persisted to `config.json`), CLI flags, environment variables. Server binds 127.0.0.1 by default. |
 | Desktop use | `web/manifest.webmanifest` + icons make the page installable as a Chrome app (own window, Dock icon); `scripts/macos-launch-agent.sh` (`npm run autostart`) starts the server at login via launchd. |
@@ -51,7 +50,6 @@ highlight tags (HLMT), sensor streams other than GPS/ACCL/GYRO (available in
 │ app.js (wiring, keys)  library.js  player.js  map.js (Leaflet) │
 │ charts.js (uPlot)  timeline.js  track.js (time lookups)        │
 │ motion.js (driver frame)  gauges.js  hud.js  stats.js  util.js │
-│ overlays.js + geojson.js (imported GeoJSON layers)              │
 └───────────────▲───────────────────────────▲─────────────────────┘
                 │ JSON (fetch)              │ video bytes (Range)
 ┌───────────────┴───────────── server/ (Node ≥ 20, Express) ─────┐
@@ -208,7 +206,7 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 
 ## 8. Acceptance criteria (v0.1)
 
-1. `npm test` passes (31 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
+1. `npm test` passes (28 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
 2. Pointing the app at a folder of GoPro files lists every recording with correct chapter grouping and duration; scanning 500 files completes in seconds (moov-only reads, cached).
 3. Selecting a recording with GPS shows the track on the map, the HUD and charts populate, and pressing play moves the marker along the track in step with the video; the marker never draws through no-fix segments.
 4. Clicking on the map track, a chart or the timeline seeks the video (across chapters) and all views stay consistent.

@@ -11,7 +11,6 @@ import { LibraryView } from './library.js';
 import { Track } from './track.js';
 import { MotionModel } from './motion.js';
 import { Gauges } from './gauges.js';
-import { Overlays } from './overlays.js';
 import { updateHud, setHudChapter } from './hud.js';
 import { renderSettings, renderStats } from './stats.js';
 import { fmtTime, padL, el } from './util.js';
@@ -56,7 +55,6 @@ const map = new TrackMap($('map'), { tiles: 'osm', onSeek: (t) => player.seek(t)
 const timeline = new Timeline($('timeline'), { onSeek: (t) => player.seek(t) });
 const charts = new Charts($('charts'), { onSeek: (t) => player.seek(t), onLayout: (left, right) => timeline.setInsets(left, right) });
 const gauges = new Gauges($('gauges'));
-const overlays = new Overlays(map.leaflet, { renderer: map.pathRenderer, onMessage: (text, kind) => toast(text, kind, kind === 'error' ? 8000 : 5000) });
 const libraryView = new LibraryView({ list: $('library'), roots: $('roots'), search: $('search') }, { onSelect: selectRecording, onRemoveRoot: removeRoot });
 
 function onPlayerState(s) {
@@ -267,8 +265,6 @@ function bindControls() {
     gauges.setAvailable(!!state.motion, !!state.motion?.hasGyro);
   });
   $('rescan-btn').addEventListener('click', () => loadLibrary(api.rescan()));
-  $('import-geojson').addEventListener('click', () => $('import-file').click());
-  $('import-file').addEventListener('change', async (e) => { await overlays.addFiles([...e.target.files]); e.target.value = ''; });
   $('root-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = $('root-input').value.trim();
