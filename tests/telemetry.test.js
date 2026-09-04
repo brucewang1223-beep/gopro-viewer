@@ -54,6 +54,23 @@ test('parseChapter keeps no-fix GPS samples and flags them (HERO8 clip)', async 
   assert.equal(stats.fixCounts.none, c.gps.n);
 });
 
+test('computeStats ignores speeds whose fix geometry is too weak', () => {
+  // sample 2 keeps a 2D fix but reports 75 m/s at DOP 3.65 — the car-park artefact
+  const gps = {
+    n: 4, t: [0, 1, 2, 3],
+    lat: [24.45, 24.4501, 24.4502, 24.4503], lon: [54.6, 54.6, 54.6, 54.6], alt: [10, 10, 10, 10],
+    speed2d: [10, 12, 75, 11], speed3d: [10, 12, 75, 11],
+    fix: [3, 3, 2, 3], dop: [1, 1.5, 3.65, 2], utc: [0, 1000, 2000, 3000],
+  };
+  const st = computeStats(gps);
+  assert.equal(st.validPoints, 4, 'all four still position the camera');
+  assert.equal(st.speedPoints, 3, 'but only three carry a usable speed');
+  assert.equal(st.maxSpeedMs, 12);
+  assert.equal(st.avgSpeedMs, 11);
+  assert.equal(st.movingTimeSec, 2, 'the untrusted leg adds no moving time');
+  assert.ok(st.distanceM > 0, 'distance still counts every positioned sample');
+});
+
 test('normalizeTelemetry prefers GPS9 (HERO11 raw sample)', async () => {
   const rawData = await readFile(require.resolve('gopro-telemetry/samples/hero11.raw'));
   const tel = await goproTelemetry({ rawData }, telemetryOptions());

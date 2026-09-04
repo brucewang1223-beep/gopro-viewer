@@ -3,17 +3,32 @@
  * A sample positions the camera only when the receiver reported a fix of at least
  * minFix (2 = 2D, 3 = 3D). Everything else — no lock, or no fix reported at all —
  * is invalid for the map, the marker and the exports, but is still charted.
+ *
+ * Speed is read only from samples whose fix geometry is good as well (DOP ≤ maxDop):
+ * a receiver that is searching keeps repeating its last speed, which is where readings
+ * like 270 km/h in an underground car park come from.
  */
 
 import { lowerIndex, bearingDeg } from './util.js';
 
+/**
+ * Highest DOP a speed reading may carry. Measured on Bruce's HERO13 (GPS9): the driven
+ * part of a recording sits at DOP 1.4 (p50) / 3.2 (p99), while the samples that reported
+ * 176 and 271 km/h in a car park carry DOP 3.65 and above. 3 keeps 97 % of the fixed
+ * samples and cuts every implausible one. Older GPS5 receivers report 4–7 throughout, so
+ * their speed line thins out — raise this if such footage ever becomes the daily driver.
+ */
+const MAX_SPEED_DOP = 3;
+
 export class Track {
-  constructor(tel, { minFix = 2 } = {}) {
+  constructor(tel, { minFix = 2, maxDop = MAX_SPEED_DOP } = {}) {
     this.tel = tel;
     this.gps = tel.gps;
     this.accl = tel.accl;
     this.minFix = minFix;
+    this.maxDop = maxDop;
     this.valid = this.gps ? this.gps.t.map((_, i) => this.isValid(i)) : [];
+    this.precise = this.gps ? this.gps.t.map((_, i) => this.isPrecise(i)) : [];
     this.validCount = this.valid.filter(Boolean).length;
     this.utcOffsetMs = tel.utcOffsetMs;
     this.duration = tel.video?.durationSec ?? (this.gps?.n ? this.gps.t[this.gps.n - 1] : 0);
@@ -31,9 +46,20 @@ export class Track {
   }
 
   /**
-   * Interpolated GPS state at global time t.
-   * @returns {{ i:number, lat:number, lon:number, alt:number, speed2d:number, speed3d:number, fix:number|null,
-   *   dop:number|null, heading:number|null, valid:boolean, utc:number|null } | null}
+   * Whether the speed of sample i can be trusted: the sample must position the camera and
+   * its fix geometry must be good. A stream that reports no DOP at all passes.
+   */
+  isPrecise(i) {
+    if (!this.valid[i]) return false;
+    const dop = this.gps.dop[i];
+    return dop == null || dop <= this.maxDop;
+  }
+
+  /**
+   * Interpolated GPS state at global time t. `speed2d` / `speed3d` are null wherever the
+   * fix geometry is too weak to trust them, so every readout shows "--" instead of a number.
+   * @returns {{ i:number, lat:number, lon:number, alt:number, speed2d:number|null, speed3d:number|null,
+   *   fix:number|null, dop:number|null, heading:number|null, valid:boolean, utc:number|null } | null}
    */
   sampleAt(t) {
     const g = this.gps;
@@ -51,8 +77,8 @@ export class Track {
       lat: both ? lerp(g.lat[i], g.lat[j]) : g.lat[i],
       lon: both ? lerp(g.lon[i], g.lon[j]) : g.lon[i],
       alt: lerp(g.alt[i], g.alt[j]),
-      speed2d: lerp(g.speed2d[i], g.speed2d[j]),
-      speed3d: lerp(g.speed3d[i], g.speed3d[j]),
+      speed2d: this.precise[i] ? lerp(g.speed2d[i], g.speed2d[j]) : null,
+      speed3d: this.precise[i] ? lerp(g.speed3d[i], g.speed3d[j]) : null,
       fix: g.fix[i], dop: g.dop[i],
       utc: this.utcOffsetMs != null ? this.utcOffsetMs + t * 1000 : g.utc[i],
       heading: null,

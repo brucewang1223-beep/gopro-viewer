@@ -54,9 +54,14 @@ function cumulativeFraction(coordinates) {
   return cum;
 }
 
-/** Speed bucket per GPS point (0 … SPEED_BUCKETS-1, scaled to the 97th percentile). */
-function speedBuckets(gps) {
-  const vmax = Math.max(1, percentile(gps.speed2d, 0.97));
+/**
+ * Speed bucket per GPS point (0 … SPEED_BUCKETS-1). The scale comes from the 97th
+ * percentile of the speeds that can be trusted, so a stuck reading from a searching
+ * receiver cannot stretch the colour ramp over the whole drive.
+ */
+function speedBuckets(track) {
+  const gps = track.gps;
+  const vmax = Math.max(1, percentile(gps.speed2d.map((v, i) => (track.precise[i] ? v : null)), 0.97));
   const buckets = new Int8Array(gps.n);
   for (let i = 0; i < gps.n; i++) buckets[i] = Math.min(SPEED_BUCKETS - 1, Math.floor(((gps.speed2d[i] ?? 0) / vmax) * SPEED_BUCKETS));
   return buckets;
@@ -87,7 +92,7 @@ function speedRamp(cum, buckets) {
  */
 export function buildRoute(track) {
   const gps = track.gps;
-  const buckets = speedBuckets(gps);
+  const buckets = speedBuckets(track);
   const runOf = new Int32Array(gps.n).fill(-1);
   const posOf = new Int32Array(gps.n).fill(-1);
   const runs = [];

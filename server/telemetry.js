@@ -172,9 +172,12 @@ export async function parseChapter(filePath, { accelHz = 25 } = {}) {
 
 /* ---------- stats ---------- */
 
+/** Highest DOP a speed reading may carry — see the note on MAX_SPEED_DOP in web/js/track.js. */
+const MAX_SPEED_DOP = 3;
+
 function emptyStats(totalPoints) {
   return {
-    validPoints: 0, totalPoints, distanceM: 0, movingTimeSec: 0, maxSpeedMs: 0, avgSpeedMs: 0,
+    validPoints: 0, speedPoints: 0, totalPoints, distanceM: 0, movingTimeSec: 0, maxSpeedMs: 0, avgSpeedMs: 0,
     elevGainM: 0, elevLossM: 0, minAltM: null, maxAltM: null, fixCounts: { none: 0, fix2d: 0, fix3d: 0 },
   };
 }
@@ -196,30 +199,41 @@ function trackElevation(st, alt, elev, thresholdM) {
 }
 
 /** Distance and moving time contributed by the leg from valid sample `prev` to `i`. */
-function addLeg(st, gps, prev, i, movingSpeedMs) {
+function addLeg(st, gps, prev, i, { speed, movingSpeedMs }) {
   if (prev < 0) return;
   const dt = gps.t[i] - gps.t[prev];
   st.distanceM += haversineM(gps.lat[prev], gps.lon[prev], gps.lat[i], gps.lon[i]);
-  if ((gps.speed2d[i] ?? 0) > movingSpeedMs && dt > 0 && dt < 5) st.movingTimeSec += dt;
+  if (speed != null && speed > movingSpeedMs && dt > 0 && dt < 5) st.movingTimeSec += dt;
 }
 
-export function computeStats(gps, { minFix = 2, elevThresholdM = 3, movingSpeedMs = 0.5 } = {}) {
+/**
+ * Speed of sample i, or null when its fix geometry is too weak to trust: a receiver that
+ * is searching keeps repeating its last speed, which is where 270 km/h in an underground
+ * car park comes from. Kept in step with MAX_SPEED_DOP in web/js/track.js.
+ */
+function usableSpeed(gps, i, maxDop) {
+  const dop = gps.dop[i];
+  if (dop != null && dop > maxDop) return null;
+  return gps.speed2d[i] ?? null;
+}
+
+export function computeStats(gps, { minFix = 2, maxDop = MAX_SPEED_DOP, elevThresholdM = 3, movingSpeedMs = 0.5 } = {}) {
   const st = emptyStats(gps?.n ?? 0);
   if (!gps || !gps.n) return st;
   const elev = { ref: null };
-  let prev = -1; let speedSum = 0;
+  let prev = -1; let speedSum = 0; let speedPoints = 0;
   for (let i = 0; i < gps.n; i++) {
     countFix(st.fixCounts, gps.fix[i]);
     if (!hasPosition(gps, i, minFix)) continue;
     st.validPoints++;
-    const speed = gps.speed2d[i] ?? 0;
-    st.maxSpeedMs = Math.max(st.maxSpeedMs, speed);
-    speedSum += speed;
-    addLeg(st, gps, prev, i, movingSpeedMs);
+    const speed = usableSpeed(gps, i, maxDop);
+    if (speed != null) { st.maxSpeedMs = Math.max(st.maxSpeedMs, speed); speedSum += speed; speedPoints++; }
+    addLeg(st, gps, prev, i, { speed, movingSpeedMs });
     trackElevation(st, gps.alt[i], elev, elevThresholdM);
     prev = i;
   }
-  st.avgSpeedMs = st.validPoints ? speedSum / st.validPoints : 0;
+  st.speedPoints = speedPoints;
+  st.avgSpeedMs = speedPoints ? speedSum / speedPoints : 0;
   for (const k of ['distanceM', 'movingTimeSec', 'maxSpeedMs', 'avgSpeedMs', 'elevGainM', 'elevLossM']) st[k] = round(st[k], 2);
   return st;
 }

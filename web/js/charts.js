@@ -19,11 +19,13 @@ const CLICK_TOLERANCE_PX = 4; // pointer travel beyond this is a zoom drag, not 
 
 /* ---------- chart specifications ---------- */
 
-function gpsSpecs(g) {
+/** Speed is charted only where the fix geometry is good enough to trust it; the rest is a gap. */
+function gpsSpecs(track) {
+  const g = track.gps;
   return [
     {
-      key: 'speed', title: 'Speed', unit: 'km/h', yMode: 'zero',
-      data: [g.t, g.speed2d.map((v) => (v == null ? null : v * MS_TO_KMH))],
+      key: 'speed', title: 'Speed', unit: `km/h · only where DOP ≤ ${track.maxDop}`, yMode: 'zero',
+      data: [g.t, g.speed2d.map((v, i) => (v == null || !track.precise[i] ? null : v * MS_TO_KMH))],
       series: [{ label: 'Speed', stroke: C.speed, fill: 'rgba(76,194,255,.10)', width: 1.5 }],
       fmt: (u, i) => `${padL((u.data[1][i] ?? 0).toFixed(1), 5)} km/h`,
     },
@@ -67,7 +69,7 @@ function accelSpec(a) {
 /** Charts to draw for a track: GPS charts when there is a fix, motion or raw |a| charts when there is IMU data. */
 function chartSpecs(track, motion) {
   const specs = [];
-  if (track.gps?.n && track.hasGps) specs.push(...gpsSpecs(track.gps));
+  if (track.gps?.n && track.hasGps) specs.push(...gpsSpecs(track));
   if (motion?.valid) specs.push(...motionSpecs(motion));
   else if (track.accl?.n) specs.push(accelSpec(track.accl));
   return specs;

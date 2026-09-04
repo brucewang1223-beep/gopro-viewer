@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { Track } from '../web/js/track.js';
 import { buildRoute, fractionAlong, gradientExpression, spliceRamps, runGradient, ROUTE } from '../web/js/map-route.js';
 
-/** Minimal telemetry: points are [t, lat, lon, speed, fix] — fix defaults to a 3D lock. */
+/** Minimal telemetry: points are [t, lat, lon, speed, fix, dop] — a 3D lock at DOP 1 by default. */
 function track(points) {
   const col = (k) => points.map((p) => p[k]);
   const gps = {
     n: points.length,
     t: col(0), lat: col(1), lon: col(2), speed2d: col(3),
     speed3d: col(3), alt: points.map(() => 10), fix: points.map((p) => (p.length > 4 ? p[4] : 3)),
-    dop: points.map(() => 1), utc: points.map(() => null),
+    dop: points.map((p) => (p.length > 5 ? p[5] : 1)), utc: points.map(() => null),
   };
   return new Track({ gps, video: { durationSec: points.at(-1)[0] } });
 }
@@ -29,6 +29,23 @@ test('runs are split on GPS gaps and lone fixes are dropped', () => {
   assert.deepEqual(route.geojson.features[1].properties, { run: 1 });
   assert.equal(route.runOf[7], -1, 'the stray fix belongs to no run');
   assert.equal(route.prevDrawn[7], 6, 'progress falls back to the last drawn point');
+});
+
+test('a weak fix keeps its place on the map but not its speed', () => {
+  // one sample carries a fixed position with hopeless geometry and an absurd speed
+  const points = straight(6).map((p, i) => (i === 3 ? [p[0], p[1], p[2], 75, 2, 8] : p));
+  const t = track(points);
+  assert.equal(t.valid[3], true, 'a 2D fix still positions the camera');
+  assert.equal(t.precise[3], false, 'but DOP 8 is too weak for a speed reading');
+  assert.equal(t.sampleAt(3).speed2d, null, 'the readout has nothing to show');
+  assert.equal(t.sampleAt(2).speed2d, 10, 'neighbouring samples are untouched');
+  assert.equal(buildRoute(t).runs.length, 1, 'and the route is still one unbroken run');
+});
+
+test('a stream that reports no DOP keeps its speed', () => {
+  const t = track(straight(4).map((p) => [...p, 3, null]));
+  assert.deepEqual(t.precise, [true, true, true, true]);
+  assert.equal(t.sampleAt(1).speed2d, 10);
 });
 
 test('a lost fix ends the run: nothing is drawn across an unpositioned stretch', () => {
