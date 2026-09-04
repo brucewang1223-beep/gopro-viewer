@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { parseChapter, mergeChapters, computeStats, normalizeTelemetry, TelemetryService, SCHEMA } from '../server/telemetry.js';
 import { telemetryOptions } from '../server/decode.js';
+import { speedOkFlags } from '../server/geo.js';
 import { readStreamOrientations, cameraFrameMapping, parseHeaderSettings } from '../server/gpmf-klv.js';
 import { Library } from '../server/library.js';
 import { FIX, FIXTURES, withTempDir } from './helpers.js';
@@ -54,21 +55,44 @@ test('parseChapter keeps no-fix GPS samples and flags them (HERO8 clip)', async 
   assert.equal(stats.fixCounts.none, c.gps.n);
 });
 
-test('computeStats ignores speeds whose fix geometry is too weak', () => {
-  // sample 2 keeps a 2D fix but reports 75 m/s at DOP 3.65 — the car-park artefact
+test('computeStats takes its speeds from the samples with a steady fix', () => {
+  // 10 s of driving at 10 Hz; the last second is a weak island reporting a stale 75 m/s
+  const n = 100;
   const gps = {
-    n: 4, t: [0, 1, 2, 3],
-    lat: [24.45, 24.4501, 24.4502, 24.4503], lon: [54.6, 54.6, 54.6, 54.6], alt: [10, 10, 10, 10],
-    speed2d: [10, 12, 75, 11], speed3d: [10, 12, 75, 11],
-    fix: [3, 3, 2, 3], dop: [1, 1.5, 3.65, 2], utc: [0, 1000, 2000, 3000],
+    n, t: Array.from({ length: n }, (_, i) => i / 10),
+    lat: Array.from({ length: n }, (_, i) => 24.45 + i * 1e-5), lon: new Array(n).fill(54.6),
+    alt: new Array(n).fill(10),
+    speed2d: Array.from({ length: n }, (_, i) => (i >= 90 ? 75 : 10)),
+    speed3d: new Array(n).fill(10),
+    fix: Array.from({ length: n }, (_, i) => (i >= 80 && i < 90 ? 0 : 3)),
+    dop: Array.from({ length: n }, (_, i) => (i >= 80 && i < 90 ? 99.99 : 1)),
+    utc: Array.from({ length: n }, (_, i) => i * 100),
   };
   const st = computeStats(gps);
-  assert.equal(st.validPoints, 4, 'all four still position the camera');
-  assert.equal(st.speedPoints, 3, 'but only three carry a usable speed');
-  assert.equal(st.maxSpeedMs, 12);
-  assert.equal(st.avgSpeedMs, 11);
-  assert.equal(st.movingTimeSec, 2, 'the untrusted leg adds no moving time');
-  assert.ok(st.distanceM > 0, 'distance still counts every positioned sample');
+  assert.equal(st.validPoints, 90, 'the ten no-fix samples do not position the camera');
+  assert.equal(st.speedPoints, 80, 'and the 1 s island after them has not proven the fix is back');
+  assert.equal(st.maxSpeedMs, 10, 'so the stale 75 m/s never becomes the maximum');
+});
+
+test('speedOkFlags forgives a short DOP dip but not a lasting one', () => {
+  const mk = (dops) => ({
+    n: dops.length, t: dops.map((_, i) => i / 10), lat: dops.map(() => 24.45), lon: dops.map(() => 54.6),
+    alt: dops.map(() => 10), speed2d: dops.map(() => 10), speed3d: dops.map(() => 10),
+    fix: dops.map(() => 3), dop: dops, utc: dops.map((_, i) => i * 100),
+  });
+  const steady = new Array(200).fill(1);   // 20 s at 10 Hz
+
+  const dip = [...steady]; for (let i = 50; i < 55; i++) dip[i] = 3.1;      // 0.5 s above the limit
+  assert.deepEqual([...speedOkFlags(mk(dip))].filter((v) => !v), [], 'a half-second dip is ignored');
+
+  const outage = [...steady]; for (let i = 50; i < 80; i++) outage[i] = 3.1; // 3 s above the limit
+  const flags = speedOkFlags(mk(outage));
+  assert.equal(flags[49], 1);
+  assert.equal(flags[60], 0, 'a three-second stretch of weak geometry is a real gap');
+  assert.equal(flags[150], 1, 'and the speed comes back once the fix has held again');
+
+  const noDop = mk(steady.map(() => null));
+  assert.equal([...speedOkFlags(noDop)].every((v) => v === 1), true, 'a stream without DOP is trusted');
 });
 
 test('normalizeTelemetry prefers GPS9 (HERO11 raw sample)', async () => {

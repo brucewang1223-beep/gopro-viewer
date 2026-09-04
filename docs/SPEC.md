@@ -25,7 +25,7 @@ speed" matters. Secondary use: exporting the telemetry (GPX / CSV) for offline a
 | Telemetry | Extract the `gpmd` track without reading the media payload; decode with `gopro-telemetry`; normalise into columnar arrays on a global time base; cache per chapter on disk. GPS5 (HERO5–10) and GPS9 (HERO11+) supported, GPS9 preferred. |
 | Sync | Map marker (with heading), HUD (speed, altitude, lat/lon, fix quality/DOP, UTC + local clock, |a|), chart playheads and timeline follow the video within one frame; seeking from map / charts / timeline / keyboard. |
 | Map | MapLibre GL with the K2 basemaps of `map.lumobility.com`, rendered from the same two styles that service publishes: **Map** (K2 Mapbox Streets Match — UAE vector to z14 over a world vector base to z7, road shields drawn on a canvas at style load because K2 ships no sprite) and **Satellite** (K2 Satellite Hybrid — UAE imagery to z19 over world imagery to z12, with a Labels chip that hides the label layers). The switcher sits bottom-left as two preview cards, mirroring K2's own picker; key `B` cycles it; the choice is remembered in `localStorage` and `config.json` only supplies the first-run default. Tiles and glyphs are fetched through `/api/map*` so the token stays server-side (§4.5). On selection the whole route is fitted and centred. Route drawn in two colours — travelled (accent) vs remaining (grey) — updated as playback advances; optional speed colouring (remaining part dimmed). Prominent pulsing position marker with heading. Map stays freely zoomable; "fit whole route" and "centre on position" buttons top-left (also key `F`); follow mode. Only samples the receiver actually fixed are drawn: a lost fix ends the line rather than being bridged, and the position marker is hidden while there is no fix instead of holding a stale position. |
-| Charts | Speed (km/h — drawn only where the fix geometry is trustworthy, DOP ≤ 3; elsewhere the line breaks), altitude (m), G-force (longitudinal / lateral / vertical g), gyro rates (yaw / pitch / roll °/s); the chart set adapts to the data available; shared cursor and zoom; chapter boundaries marked. |
+| Charts | Speed (km/h — drawn only where the GPS fix is steady, see the speed rule in §4.2; elsewhere the line breaks), altitude (m), G-force (longitudinal / lateral / vertical g), gyro rates (yaw / pitch / roll °/s); the chart set adapts to the data available; shared cursor and zoom; chapter boundaries marked. |
 | Gauges | Instrument cluster centred at the top of the video: G-force ball (friction circle, 0.5 g / 1 g rings, trail), gyro ball (yaw ↔, pitch ↕, roll-rate arc at the rim) and attitude bubble level (pitch / roll from the measured gravity direction). Toggle with `G`. |
 | Audio | Always muted by design (`<video muted>` and enforced in code); no volume UI. Muted playback also avoids browser autoplay restrictions. |
 | GPS status strip | A bar along the bottom of the timeline shows the receiver's status over the whole recording, in the HUD's colours: red = no fix (nothing drawn on the map there), amber = 2D fix, green = 3D fix. The recording is bucketed into 600 columns and each column takes the status most of its samples reported (ties go to the worse one). The `Fix 3D / 2D / none` counts in the stats bar carry the same three colours and double as the legend. |
@@ -111,7 +111,8 @@ Chapter grouping rules (`server/library.js`): `GX/GHccnnnn.MP4` → recording `n
   startTimeCamera, utcOffsetMs,                 // utc(t) = utcOffsetMs + t*1000
   chapters: [{ id, file, index, offsetSec, durationSec, gpsPoints, gpsSource, warnings }],
   gps:  { source: "GPS5"|"GPS9", hz, n, altitudeSystem,
-          t[], lat[], lon[], alt[], speed2d[], speed3d[], fix[], dop[], utc[] },
+          t[], lat[], lon[], alt[], speed2d[], speed3d[], fix[], dop[], utc[],
+          speedOk[] },                          // 0/1 per sample — see the speed rule below
   accl: { hz, n, frame: "camera", orientation: {orin, orio, order, source},
           t[], x[], y[], z[], mag[], magMax[] },                            // m/s², x left, y back, z up
   gyro: { … same shape … },                                                  // rad/s, same frame
@@ -131,17 +132,28 @@ A run of drawn points ends wherever that rule fails, so no line is ever drawn ac
 the receiver could not position, and a run left with a single point is not drawn at all.
 Statistics apply the same validity rule; the altitude chart and CSV keep every sample.
 
-Speed rule (`MAX_SPEED_DOP = 3` in `web/js/track.js`, mirrored in `server/telemetry.js`): a speed
-reading counts only when the sample is valid **and** its `dop ≤ 3` (a stream that reports no DOP
-passes). A receiver that has lost its fix keeps repeating its last speed — that is where 176 and
-271 km/h readings in an underground car park come from, and one of them still carried a 2D fix
-with DOP 3.65. The rule drives the HUD readout (`--` when it fails), the speed chart (a gap), the
-speed-colour scale on the map, and `maxSpeedMs` / `avgSpeedMs` / `movingTimeSec` in the stats
-(`speedPoints` reports how many samples fed them). Distance, the drawn route and the exports are
-untouched by it — GPX/GeoJSON/CSV carry the camera's own speeds with the `dop` column alongside.
-On Bruce's HERO13 the threshold keeps 97 % of the fixed samples and takes the maximum from
-271.8 km/h to 54.7 km/h. Older GPS5 receivers report DOP 4–7 throughout, so their speed line thins
-out — the constant is the one place to raise.
+Speed rule (`SPEED_QUALITY` and `speedOkFlags` in `server/geo.js`, evaluated once per recording in
+`mergeChapters` and shipped as the `gps.speedOk` column): a speed reading counts only where the fix
+behind it is **steady**, which takes three parameters, not one.
+
+| | value | why |
+| --- | --- | --- |
+| `maxDop` | 3 | Driving sits at DOP 1.42 (p50) / 3.17 (p99); every implausible reading in GX0001 starts at 3.65. A threshold of 5 would let the 271.8 km/h sample through. A stream that reports no DOP at all passes. |
+| `maxDipSec` | 2 | DOP wobbles sample to sample — in normal city driving it crosses 3 for a tenth of a second at a time (17 of the 20 weak stretches in GX0001 last under 1 s). A dip shorter than this with good samples on **both** sides is ignored, otherwise a bare threshold shreds the line into fragments. |
+| `minSteadySec` | 3 | An island of good samples shorter than this is dropped. A receiver that has just come back for half a second has proven nothing, and the speed it reports is still the stale one it froze on — that is exactly the 2-sample island that made 271.8 km/h the recording's maximum. |
+
+A receiver that has lost its lock repeats its last speed, so the rule is about the fix rather than
+the number: in GX0001 hundreds of consecutive `fix = 0` samples report exactly 176.7 and then
+exactly 271.8 km/h. The three values together leave that drive as **one unbroken speed line**
+(5188 of 5354 positioned samples) and take the maximum from 271.8 km/h to 54.7 km/h.
+
+The flag drives the HUD readout (`--` when it fails), the speed chart (a gap), the speed-colour
+scale on the map, and `maxSpeedMs` / `avgSpeedMs` / `movingTimeSec` in the stats (`speedPoints`
+reports how many samples fed them). The client does not re-derive it: `Track.precise` is
+`valid && gps.speedOk`, so it can never be looser than the positioning rule. Distance, the drawn
+route and the exports are untouched — GPX/GeoJSON/CSV carry the camera's own speeds with the `dop`
+column alongside. Older GPS5 receivers report DOP 4–7 throughout (Fusion is pinned at 6.73), so
+their speed line thins right out; `SPEED_QUALITY` is the one place to raise.
 
 ### 4.2b Camera settings (`recording.settings`, `telemetry.settings`)
 

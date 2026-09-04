@@ -13,7 +13,7 @@ import path from 'node:path';
 import { readMp4Info, readGpmfTrack } from './mp4.js';
 import { readStreamOrientations, cameraFrameMapping, headerSettingsSummary } from './gpmf-klv.js';
 import { decodeTelemetry, devicesOf } from './decode.js';
-import { haversineM, hasPosition } from './geo.js';
+import { haversineM, hasPosition, speedOkFlags } from './geo.js';
 import { readJsonCache, writeJsonCache } from './json-cache.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
@@ -172,9 +172,6 @@ export async function parseChapter(filePath, { accelHz = 25 } = {}) {
 
 /* ---------- stats ---------- */
 
-/** Highest DOP a speed reading may carry — see the note on MAX_SPEED_DOP in web/js/track.js. */
-const MAX_SPEED_DOP = 3;
-
 function emptyStats(totalPoints) {
   return {
     validPoints: 0, speedPoints: 0, totalPoints, distanceM: 0, movingTimeSec: 0, maxSpeedMs: 0, avgSpeedMs: 0,
@@ -206,34 +203,32 @@ function addLeg(st, gps, prev, i, { speed, movingSpeedMs }) {
   if (speed != null && speed > movingSpeedMs && dt > 0 && dt < 5) st.movingTimeSec += dt;
 }
 
-/**
- * Speed of sample i, or null when its fix geometry is too weak to trust: a receiver that
- * is searching keeps repeating its last speed, which is where 270 km/h in an underground
- * car park comes from. Kept in step with MAX_SPEED_DOP in web/js/track.js.
- */
-function usableSpeed(gps, i, maxDop) {
-  const dop = gps.dop[i];
-  if (dop != null && dop > maxDop) return null;
-  return gps.speed2d[i] ?? null;
+/** Max / mean over the speeds worth trusting, and how many of them there were. */
+function speedSummary(gps, speedOk) {
+  let max = 0; let sum = 0; let n = 0;
+  for (let i = 0; i < gps.n; i++) {
+    const v = speedOk[i] ? gps.speed2d[i] : null;
+    if (v == null) continue;
+    max = Math.max(max, v); sum += v; n++;
+  }
+  return { maxSpeedMs: max, avgSpeedMs: n ? sum / n : 0, speedPoints: n };
 }
 
-export function computeStats(gps, { minFix = 2, maxDop = MAX_SPEED_DOP, elevThresholdM = 3, movingSpeedMs = 0.5 } = {}) {
+export function computeStats(gps, { minFix = 2, elevThresholdM = 3, movingSpeedMs = 0.5 } = {}) {
   const st = emptyStats(gps?.n ?? 0);
   if (!gps || !gps.n) return st;
+  const speedOk = gps.speedOk ?? speedOkFlags(gps, { minFix });
   const elev = { ref: null };
-  let prev = -1; let speedSum = 0; let speedPoints = 0;
+  let prev = -1;
   for (let i = 0; i < gps.n; i++) {
     countFix(st.fixCounts, gps.fix[i]);
     if (!hasPosition(gps, i, minFix)) continue;
     st.validPoints++;
-    const speed = usableSpeed(gps, i, maxDop);
-    if (speed != null) { st.maxSpeedMs = Math.max(st.maxSpeedMs, speed); speedSum += speed; speedPoints++; }
-    addLeg(st, gps, prev, i, { speed, movingSpeedMs });
+    addLeg(st, gps, prev, i, { speed: speedOk[i] ? gps.speed2d[i] : null, movingSpeedMs });
     trackElevation(st, gps.alt[i], elev, elevThresholdM);
     prev = i;
   }
-  st.speedPoints = speedPoints;
-  st.avgSpeedMs = speedPoints ? speedSum / speedPoints : 0;
+  Object.assign(st, speedSummary(gps, speedOk));
   for (const k of ['distanceM', 'movingTimeSec', 'maxSpeedMs', 'avgSpeedMs', 'elevGainM', 'elevLossM']) st[k] = round(st[k], 2);
   return st;
 }
@@ -296,6 +291,15 @@ function utcAlignment(gps, settings, creationTime) {
 }
 
 /**
+ * Attach the speed-quality flags to the merged stream, so the UI and the statistics read
+ * one answer. Derived here rather than per chapter: the rule spans chapter boundaries.
+ */
+function withSpeedFlags(gps) {
+  if (gps) gps.speedOk = Array.from(speedOkFlags(gps));
+  return gps;
+}
+
+/**
  * Merge per-chapter telemetry into one recording timeline.
  * @param {Array<{ chapter: object, data: object }>} items ordered by chapter index
  */
@@ -312,7 +316,7 @@ export function mergeChapters(recording, items) {
     for (const key of Object.keys(parts)) if (data[key]) parts[key].push(shifted(data[key], chapter.offsetSec));
   }
   const altitudeSystem = parts.gps.find((g) => g.altitudeSystem)?.altitudeSystem ?? null;
-  const gps = mergeStreams(parts.gps, GPS_COLUMNS, (first) => ({ source: first.source, hz: first.hz, altitudeSystem }));
+  const gps = withSpeedFlags(mergeStreams(parts.gps, GPS_COLUMNS, (first) => ({ source: first.source, hz: first.hz, altitudeSystem })));
   const accl = mergeStreams(parts.accl, IMU_COLUMNS, imuHeader);
   const gyro = mergeStreams(parts.gyro, IMU_COLUMNS, imuHeader);
   const { utcOffsetMs, utcSource } = utcAlignment(gps, settings, items[0]?.data?.creationTime);

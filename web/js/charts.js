@@ -24,7 +24,7 @@ function gpsSpecs(track) {
   const g = track.gps;
   return [
     {
-      key: 'speed', title: 'Speed', unit: `km/h · only where DOP ≤ ${track.maxDop}`, yMode: 'zero',
+      key: 'speed', title: 'Speed', unit: 'km/h · only where the GPS fix is steady', yMode: 'zero',
       data: [g.t, g.speed2d.map((v, i) => (v == null || !track.precise[i] ? null : v * MS_TO_KMH))],
       series: [{ label: 'Speed', stroke: C.speed, fill: 'rgba(76,194,255,.10)', width: 1.5 }],
       fmt: (u, i) => `${padL((u.data[1][i] ?? 0).toFixed(1), 5)} km/h`,
