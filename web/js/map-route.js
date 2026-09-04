@@ -1,8 +1,9 @@
 /**
  * Route geometry for the MapLibre map.
  *
- * A track becomes one GeoJSON LineString per "run" — a stretch of valid GPS fixes,
- * split on time gaps. Alongside the coordinates each run carries:
+ * A track becomes one GeoJSON LineString per "run" — an unbroken stretch of fixed GPS
+ * samples, split where the fix is lost or on time gaps. Alongside the coordinates each
+ * run carries:
  *
  *   cum      fraction along the run (0…1) for every point, measured in Web-Mercator
  *            units so it lines up exactly with MapLibre's `line-progress`;
@@ -91,15 +92,16 @@ export function buildRoute(track) {
   const posOf = new Int32Array(gps.n).fill(-1);
   const runs = [];
 
-  for (const range of track.runs()) {
-    const points = [];
-    for (let i = range.start; i <= range.end; i++) if (track.valid[i]) points.push(i);
-    if (points.length < 2) continue;               // a lone fix cannot be drawn as a line
+  for (const { start, end } of track.runs()) {
+    if (end - start < 1) continue;                 // a lone fix cannot be drawn as a line
     const r = runs.length;
-    points.forEach((i, pos) => { runOf[i] = r; posOf[i] = pos; });
-    const coordinates = points.map((i) => [gps.lon[i], gps.lat[i]]);
+    const coordinates = [];
+    for (let i = start; i <= end; i++) {
+      runOf[i] = r; posOf[i] = i - start;
+      coordinates.push([gps.lon[i], gps.lat[i]]);
+    }
     const cum = cumulativeFraction(coordinates);
-    const ramp = speedRamp(cum, points.map((i) => buckets[i]));
+    const ramp = speedRamp(cum, buckets.subarray(start, end + 1));
     runs.push({ coordinates, cum, ramp, dimRamp: ramp.map(([f, c]) => [f, dim(c)]) });
   }
 

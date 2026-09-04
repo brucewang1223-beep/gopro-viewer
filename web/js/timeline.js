@@ -7,13 +7,16 @@
 import { fmtTime } from './util.js';
 
 const QUALITY_BUCKETS = 600;
-const QUALITY = { none: 0, noFix: 1, ok: 2 };
+const QUALITY = { none: 0, noFix: 1, fix2d: 2, fix3d: 3 };
+const QUALITY_STATES = 4;
 const FONT = '10px -apple-system, sans-serif';
 const EMPTY_FONT = '11px -apple-system, sans-serif';
 const MONO = '10px ui-monospace, monospace';
 const COLORS = {
   panel: '#1d2129', chapterA: '#1f2430', chapterB: '#232833', border: '#262b36', muted: '#8b93a7', text: '#e6e9ef',
-  playhead: '#ffb020', labelBg: 'rgba(15,17,21,.85)', fixOk: 'rgba(53,208,127,.7)', fixBad: 'rgba(255,92,92,.7)',
+  playhead: '#ffb020', labelBg: 'rgba(15,17,21,.85)',
+  // one colour per QUALITY state, matching the HUD's fix classes: bad / warn / ok
+  quality: [null, 'rgba(255,92,92,.7)', 'rgba(255,176,32,.8)', 'rgba(53,208,127,.7)'],
 };
 
 export class Timeline {
@@ -103,13 +106,16 @@ export class Timeline {
     });
   }
 
-  /** GPS quality strip along the bottom, labelled in the left gutter (under the charts' y-axis labels). */
+  /**
+   * GPS status strip along the bottom, labelled in the left gutter (under the charts'
+   * y-axis labels): red where the receiver had no fix, amber for a 2D fix, green for 3D.
+   */
   #drawQuality(x0, pw, h) {
     const { ctx } = this;
     const bw = pw / this.quality.length;
     this.quality.forEach((q, b) => {
       if (q === QUALITY.none) return;
-      ctx.fillStyle = q === QUALITY.ok ? COLORS.fixOk : COLORS.fixBad;
+      ctx.fillStyle = COLORS.quality[q];
       ctx.fillRect(x0 + b * bw, h - 5, Math.ceil(bw), 4);
     });
     if (x0 >= 30) {
@@ -132,13 +138,35 @@ export class Timeline {
   }
 }
 
-/** Per-bucket GPS quality over the recording: none, GPS without fix, or fix. */
+/**
+ * GPS status of sample i. Only samples the map actually draws count as a fix, so the
+ * strip and the route always agree; the reported fix then tells 2D from 3D.
+ */
+function statusOf(track, i) {
+  if (!track.valid[i]) return QUALITY.noFix;
+  return track.gps.fix[i] >= 3 ? QUALITY.fix3d : QUALITY.fix2d;
+}
+
+/**
+ * Per-bucket GPS status over the recording: the status most of the bucket's samples
+ * reported, so a single flapping sample cannot repaint a whole bar. Ties go to the
+ * worse status, and a bucket without samples stays `none` and is left unpainted.
+ */
 function buildQuality(track, durationSec) {
   const g = track.gps;
-  const q = new Uint8Array(QUALITY_BUCKETS);
+  const counts = new Uint32Array(QUALITY_BUCKETS * QUALITY_STATES);
   for (let i = 0; i < g.n; i++) {
     const b = Math.min(QUALITY_BUCKETS - 1, Math.floor((g.t[i] / durationSec) * QUALITY_BUCKETS));
-    q[b] = Math.max(q[b], track.valid[i] ? QUALITY.ok : QUALITY.noFix);
+    counts[b * QUALITY_STATES + statusOf(track, i)]++;
+  }
+  const q = new Uint8Array(QUALITY_BUCKETS);
+  for (let b = 0; b < QUALITY_BUCKETS; b++) {
+    let top = QUALITY.none; let topCount = 0;
+    for (let s = QUALITY.noFix; s < QUALITY_STATES; s++) {
+      const n = counts[b * QUALITY_STATES + s];
+      if (n > topCount) { topCount = n; top = s; }
+    }
+    q[b] = top;
   }
   return q;
 }

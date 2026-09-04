@@ -88,9 +88,9 @@ test('telemetry and exports for a two-chapter recording', async () => {
   assert.match(geo.headers.get('content-disposition'), /GX0001\.geojson/);
   const fc = JSON.parse(await geo.text());
   assert.equal(fc.type, 'FeatureCollection');
-  assert.ok(fc.features.length >= 1);
+  assert.ok(fc.features.length >= 2, 'the no-fix stretch in the middle of the clip cuts the track in two');
   assert.equal(fc.features[0].geometry.type, 'LineString');
-  assert.ok(fc.features[0].geometry.coordinates.length > 100);
+  assert.ok(fc.features.reduce((n, f) => n + f.geometry.coordinates.length, 0) > 100);
   assert.equal(fc.features[0].properties.camera, 'Hero6 Black');
 
   const csv = await fetch(`${base}/api/recordings/${rec.id}/export.csv?stream=accl`);

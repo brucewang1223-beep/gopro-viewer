@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { Track } from '../web/js/track.js';
 import { buildRoute, fractionAlong, gradientExpression, spliceRamps, runGradient, ROUTE } from '../web/js/map-route.js';
 
-/** Minimal telemetry: points are [t, lat, lon, speed] and always carry a 3D fix. */
+/** Minimal telemetry: points are [t, lat, lon, speed, fix] — fix defaults to a 3D lock. */
 function track(points) {
   const col = (k) => points.map((p) => p[k]);
   const gps = {
     n: points.length,
     t: col(0), lat: col(1), lon: col(2), speed2d: col(3),
-    speed3d: col(3), alt: points.map(() => 10), fix: points.map(() => 3),
+    speed3d: col(3), alt: points.map(() => 10), fix: points.map((p) => (p.length > 4 ? p[4] : 3)),
     dop: points.map(() => 1), utc: points.map(() => null),
   };
   return new Track({ gps, video: { durationSec: points.at(-1)[0] } });
@@ -29,6 +29,18 @@ test('runs are split on GPS gaps and lone fixes are dropped', () => {
   assert.deepEqual(route.geojson.features[1].properties, { run: 1 });
   assert.equal(route.runOf[7], -1, 'the stray fix belongs to no run');
   assert.equal(route.prevDrawn[7], 6, 'progress falls back to the last drawn point');
+});
+
+test('a lost fix ends the run: nothing is drawn across an unpositioned stretch', () => {
+  // 3 fixed points, 2 without a lock, then 3 more — a straight line must not bridge the hole
+  const points = straight(8).map((p, i) => (i === 3 || i === 4 ? [...p, 0] : p));
+  const route = buildRoute(track(points));
+  assert.equal(route.runs.length, 2);
+  assert.deepEqual(route.runs.map((r) => r.coordinates.length), [3, 3]);
+  assert.equal(route.runOf[3], -1, 'a sample without a fix belongs to no run');
+  assert.equal(route.runOf[5], 1);
+  assert.equal(route.posOf[5], 0, 'the second run starts again at position 0');
+  assert.equal(route.prevDrawn[4], 2, 'playback holds at the last drawn point');
 });
 
 test('cumulative fractions span 0 … 1 and index maps point back at the track', () => {
@@ -97,4 +109,8 @@ test('a track without a usable fix produces no runs', () => {
   assert.deepEqual(route.runs, []);
   assert.equal(route.bounds, null);
   assert.equal(route.geojson.features.length, 0);
+
+  const unreported = track(straight(4).map((p) => [...p, null]));   // GPS stream with no GPSF at all
+  assert.equal(unreported.hasGps, false);
+  assert.deepEqual(buildRoute(unreported).runs, []);
 });

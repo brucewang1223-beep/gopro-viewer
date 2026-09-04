@@ -6,6 +6,7 @@
 import { fmtTime, fmtClock, fmtDistance, describeSettings, MS_TO_KMH, el } from './util.js';
 
 const chip = (label, value) => el('span', {}, [`${label} `, el('b', { text: value })]);
+const count = (cls, text) => el('b', { class: `fix ${cls}`, text });
 const cameraChip = (model, firmware) => chip('Camera', `${model ?? '?'}${firmware ? ` · ${firmware}` : ''}`);
 const settingChips = (settings) => describeSettings(settings).map(([label, value]) => chip(label, value));
 const show = (chips) => document.getElementById('stats').replaceChildren(...chips);
@@ -18,6 +19,15 @@ export function renderSettings(rec) {
   show(chips);
 }
 
+/** Sample counts per fix quality, in the colours the GPS status strip uses. */
+function fixChip(c = {}) {
+  return el('span', {}, ['Fix ',
+    count('ok', `3D ${c.fix3d ?? 0}`), ' / ',
+    count('warn', `2D ${c.fix2d ?? 0}`), ' / ',
+    count('bad', `none ${c.none ?? 0}`),
+  ]);
+}
+
 function rideChips(s) {
   return [
     chip('Distance', fmtDistance(s.distanceM)),
@@ -25,7 +35,7 @@ function rideChips(s) {
     chip('Avg', `${(s.avgSpeedMs * MS_TO_KMH).toFixed(1)} km/h`),
     chip('Moving', fmtTime(s.movingTimeSec, 0)),
     chip('Elev +/−', `${Math.round(s.elevGainM)} / ${Math.round(s.elevLossM)} m`),
-    chip('Fix 3D/2D/none', `${s.fixCounts?.fix3d ?? 0}/${s.fixCounts?.fix2d ?? 0}/${s.fixCounts?.none ?? 0}`),
+    fixChip(s.fixCounts),
   ];
 }
 

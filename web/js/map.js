@@ -113,6 +113,7 @@ export class TrackMap {
     this.markerEl = el;
     this.arrowEl = el.querySelector('.arrow');
     this.marker = new maplibregl.Marker({ element: el, anchor: 'center' });
+    this.markerVisible = true;
   }
 
   /** Track whether the user is panning or zooming, so follow mode stays out of the way. */
@@ -223,17 +224,29 @@ export class TrackMap {
 
   /** Update marker and progress from a Track.sampleAt() sample. */
   update(sample) {
-    if (!this.route || !sample?.valid || sample.lat == null) return;
-    const at = [sample.lon, sample.lat];
-    this.position = at;
-    this.#moveMarker(sample, at);
-    const i = this.route.prevDrawn[clamp(sample.i, 0, this.route.prevDrawn.length - 1)];
-    if (i >= 0) {
-      const run = this.route.runOf[i];
-      this.cursor = { run, progress: fractionAlong(this.route.runs[run], this.route.posOf[i], at) };
-      this.#paintProgress();
+    if (!this.route || !sample) return;
+    const at = sample.valid && sample.lat != null ? [sample.lon, sample.lat] : null;
+    this.#showMarker(!!at);
+    if (at) { this.position = at; this.#moveMarker(sample, at); }
+    this.#trackProgress(sample.i, at);
+    if (at) this.#keepInView(at);
+  }
+
+  /**
+   * Move the travelled / remaining cut to where playback is. While the receiver had no
+   * fix the cut holds at the last drawn point before it, so an unpositioned stretch is
+   * never painted as driven — and seeking back in front of the first fix undoes it all.
+   */
+  #trackProgress(i, at) {
+    const drawn = this.route.prevDrawn[clamp(i, 0, this.route.prevDrawn.length - 1)];
+    if (drawn < 0) {
+      this.cursor = { run: 0, progress: 0 };
+    } else {
+      const run = this.route.runOf[drawn]; const pos = this.route.posOf[drawn];
+      const point = at ?? this.route.runs[run].coordinates[pos];
+      this.cursor = { run, progress: fractionAlong(this.route.runs[run], pos, point) };
     }
-    this.#keepInView(at);
+    this.#paintProgress();
   }
 
   setFollow(on) { this.follow = on; }
@@ -299,6 +312,13 @@ export class TrackMap {
     if (!this.track || !this.onSeek) return;
     const i = this.track.nearestToLatLng(lngLat.lat, lngLat.lng);
     if (i >= 0) this.onSeek(this.track.gps.t[i]);
+  }
+
+  /** Hidden wherever the receiver had no fix, so the marker never sits on a guessed position. */
+  #showMarker(on) {
+    if (on === this.markerVisible) return;
+    this.markerVisible = on;
+    this.markerEl.style.visibility = on ? '' : 'hidden';
   }
 
   #moveMarker(sample, at) {

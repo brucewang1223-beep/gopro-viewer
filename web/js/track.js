@@ -1,6 +1,8 @@
 /**
  * Client-side view over merged telemetry: fast lookups by global time.
- * GPS samples with fix < minFix are treated as invalid for positioning (but still charted).
+ * A sample positions the camera only when the receiver reported a fix of at least
+ * minFix (2 = 2D, 3 = 3D). Everything else — no lock, or no fix reported at all —
+ * is invalid for the map, the marker and the exports, but is still charted.
  */
 
 import { lowerIndex, bearingDeg } from './util.js';
@@ -22,8 +24,7 @@ export class Track {
   isValid(i) {
     const g = this.gps;
     if (!g || g.lat[i] == null || g.lon[i] == null) return false;
-    const f = g.fix[i];
-    if (f != null && f < this.minFix) return false;
+    if (!(g.fix[i] >= this.minFix)) return false;   // no lock, or no fix reported at all
     // reject the (0,0) island and wildly implausible coordinates
     if (Math.abs(g.lat[i]) < 1e-6 && Math.abs(g.lon[i]) < 1e-6) return false;
     return Math.abs(g.lat[i]) <= 90 && Math.abs(g.lon[i]) <= 180;
@@ -86,15 +87,17 @@ export class Track {
   }
 
   /**
-   * Contiguous runs of valid points for drawing, split on time gaps > maxGapSec.
-   * @returns {Array<{ start:number, end:number }>} inclusive index ranges
+   * Contiguous runs of valid points for drawing. A run ends where the receiver loses
+   * its fix — nothing is drawn across a stretch it could not position — and where more
+   * than maxGapSec passed between samples.
+   * @returns {Array<{ start:number, end:number }>} inclusive index ranges, all points valid
    */
   runs(maxGapSec = 5) {
     const g = this.gps; const out = [];
     if (!g) return out;
     let start = -1; let prev = -1;
     for (let i = 0; i < g.n; i++) {
-      if (!this.valid[i]) continue;
+      if (!this.valid[i]) { if (start >= 0) out.push({ start, end: prev }); start = -1; continue; }
       if (start < 0) start = i;
       else if (g.t[i] - g.t[prev] > maxGapSec) { out.push({ start, end: prev }); start = i; }
       prev = i;

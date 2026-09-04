@@ -63,8 +63,7 @@ function position(gps, i) {
 function runGeometry(gps, run) {
   const coordinates = []; const times = []; const speeds = [];
   let distanceM = 0; let maxSpeedMs = 0; let speedSum = 0; let prev = -1;
-  for (let i = run.start; i <= run.end; i++) {
-    if (!hasPosition(gps, i)) continue;
+  for (let i = run.start; i <= run.end; i++) {   // a run holds positioned samples only
     coordinates.push(position(gps, i));
     times.push(gps.utc[i] != null ? iso(gps.utc[i]) : null);
     const speed = gps.speed2d[i] ?? null;
@@ -142,10 +141,9 @@ function runFeature(tel, gps, run, index, runCount) {
  */
 export function toGeoJson(tel, { minFix = 2, maxGapSec = 5 } = {}) {
   const gps = tel.gps;
-  const runs = gps ? positionRuns(gps, { minFix, maxGapSec }) : [];
-  const features = runs
-    .map((run, i) => runFeature(tel, gps, run, i, runs.length))
-    .filter((f) => f.geometry.coordinates.length > 1);
+  const all = gps ? positionRuns(gps, { minFix, maxGapSec }) : [];
+  const runs = all.filter((r) => r.end > r.start);          // a lone fix is not a line
+  const features = runs.map((run, i) => runFeature(tel, gps, run, i, runs.length));
   return JSON.stringify({ type: 'FeatureCollection', features }, null, 1) + '\n';
 }
 
