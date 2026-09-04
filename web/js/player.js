@@ -134,10 +134,25 @@ export class Player {
 
   step(dt) { this.seek(this.time + dt); }
 
-  frameStep(dir) {
-    const fps = this.chapter?.video?.fps || this.recording?.fps || 30;
+  /**
+   * Step by whole video frames (negative = backwards) and pause. Frames sit on the
+   * chapter's own grid, so the arithmetic runs on chapter-local time; the target is
+   * the middle of the frame, because a seek that lands exactly on a frame boundary
+   * is ambiguous and would make repeated steps drift by a frame.
+   * @param {number} frames
+   */
+  frameStep(frames) {
+    const ch = this.chapter;
+    if (!ch) return;
+    const fps = ch.video?.fps || this.recording?.fps || 30;
+    const local = (this.pendingSeek ?? this.video.currentTime) || 0;
+    const index = Math.max(0, Math.floor(local * fps + 1e-6));
+    const target = ch.offsetSec + (index + frames + 0.5) / fps;
+    const next = this.chapters[this.chapterIndex + 1];
     this.pause();
-    this.seek(this.time + dir / fps);
+    // seek() keeps 50 ms clear of a chapter's end, so a step landing in that gap would stall:
+    // frames run on into the next file, so continue there instead.
+    this.seek(next && target > next.offsetSec - 0.05 ? next.offsetSec + 0.5 / (next.video?.fps || fps) : target);
   }
 
   nextChapter() { if (this.chapterIndex + 1 < this.chapters.length) this.seek(this.chapters[this.chapterIndex + 1].offsetSec); }

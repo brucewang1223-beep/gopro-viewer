@@ -74,7 +74,7 @@ The choice is remembered per browser; `config.json` only sets the first-run defa
 | Key | Action |
 | --- | --- |
 | `Space` | play / pause |
-| `←` / `→` | skip back / forward by the "Skip" step (default 5 s, selectable 1–60 s; `Shift` = ×6) |
+| `←` / `→` | skip back / forward by the "Skip" step (default 5 s; 1/2/5/10 frames or 1–60 s; `Shift` = ×6) |
 | `,` / `.` | previous / next frame |
 | `[` / `]` | previous / next chapter |
 | `Home` / `End` | start / end |

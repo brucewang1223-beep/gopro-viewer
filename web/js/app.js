@@ -22,7 +22,8 @@ const MAP_STORAGE_KEY = 'gopro-viewer.map';
 const EXPORTS = [['export-gpx', 'gpx'], ['export-geojson', 'geojson'], ['export-csv', 'csv', 'gps'], ['export-accl', 'csv', 'accl']];
 
 const state = { recording: null, track: null, motion: null };
-let skipStep = 5;
+/** Step taken by ← / → and the −/+ buttons: `unit` 's' = seconds, 'f' = whole video frames. */
+let skipStep = { n: 5, unit: 's' };
 let timeWidth = 7;
 let lastHudUpdate = 0;
 
@@ -203,15 +204,27 @@ async function removeRoot(id) {
 
 /* ---------- controls ---------- */
 
-/** Seconds skipped by ← / → and the −/+ buttons (Shift = ×6), remembered per browser. */
+/** `'5s'` / `'2f'` → step. A bare number is seconds — that is what was stored before frames existed. */
+function parseSkipStep(value) {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([sf])?\s*$/.exec(String(value ?? ''));
+  const n = m ? Number(m[1]) : 0;
+  if (!(n > 0)) return { n: 5, unit: 's' };
+  return m[2] === 'f' ? { n: Math.round(n) || 1, unit: 'f' } : { n: Math.max(0.5, n), unit: 's' };
+}
+
+const stepLabel = (s) => `${s.n}${s.unit}`;
+const stepWords = (s) => (s.unit === 'f' ? `${s.n} frame${s.n > 1 ? 's' : ''}` : `${s.n} s`);
+const stepHint = (s) => (s.unit === 'f' ? ' — pauses playback' : '');
+
+/** Step used by ← / → and the −/+ buttons (Shift = ×6), remembered per browser. */
 function applySkipStep(value) {
-  skipStep = Math.max(0.5, Number(value) || 5);
-  $('skip-step').value = String(skipStep);
-  $('btn-back').textContent = `−${skipStep}s`;
-  $('btn-fwd').textContent = `+${skipStep}s`;
-  $('btn-back').title = `Back ${skipStep} s (←, Shift ×6)`;
-  $('btn-fwd').title = `Forward ${skipStep} s (→, Shift ×6)`;
-  try { localStorage.setItem(SKIP_STORAGE_KEY, String(skipStep)); } catch { /* private mode */ }
+  skipStep = parseSkipStep(value);
+  $('skip-step').value = stepLabel(skipStep);
+  $('btn-back').textContent = `−${stepLabel(skipStep)}`;
+  $('btn-fwd').textContent = `+${stepLabel(skipStep)}`;
+  $('btn-back').title = `Back ${stepWords(skipStep)} (←, Shift ×6)${stepHint(skipStep)}`;
+  $('btn-fwd').title = `Forward ${stepWords(skipStep)} (→, Shift ×6)${stepHint(skipStep)}`;
+  try { localStorage.setItem(SKIP_STORAGE_KEY, stepLabel(skipStep)); } catch { /* private mode */ }
 }
 
 function savedSkipStep() {
@@ -223,7 +236,12 @@ function savedMapPrefs() {
   try { return JSON.parse(localStorage.getItem(MAP_STORAGE_KEY)) ?? {}; } catch { return {}; }
 }
 
-const skipAmount = (e) => (e.shiftKey ? skipStep * 6 : skipStep);
+/** One skip in `dir` (−1 back, +1 forward); Shift multiplies the step by 6. */
+function skipBy(dir, e) {
+  const n = dir * skipStep.n * (e?.shiftKey ? 6 : 1);
+  if (skipStep.unit === 'f') player.frameStep(n);
+  else player.step(n);
+}
 
 /** Flip a checkbox and run its change handler, exactly as a click would. */
 function toggle(id) {
@@ -234,8 +252,8 @@ function toggle(id) {
 
 const KEYS = new Map([
   [' ', () => player.toggle()],
-  ['ArrowLeft', (e) => player.step(-skipAmount(e))],
-  ['ArrowRight', (e) => player.step(skipAmount(e))],
+  ['ArrowLeft', (e) => skipBy(-1, e)],
+  ['ArrowRight', (e) => skipBy(1, e)],
   [',', () => player.frameStep(-1)],
   ['.', () => player.frameStep(1)],
   ['[', () => player.prevChapter()],
@@ -259,11 +277,11 @@ function onKeyDown(e) {
 }
 
 function bindControls() {
-  applySkipStep(savedSkipStep() ?? 5);
+  applySkipStep(savedSkipStep() ?? '5s');
   $('skip-step').addEventListener('change', (e) => applySkipStep(e.target.value));
   $('btn-play').addEventListener('click', () => player.toggle());
-  $('btn-back').addEventListener('click', () => player.step(-skipStep));
-  $('btn-fwd').addEventListener('click', () => player.step(skipStep));
+  $('btn-back').addEventListener('click', (e) => skipBy(-1, e));
+  $('btn-fwd').addEventListener('click', (e) => skipBy(1, e));
   $('btn-prev').addEventListener('click', () => player.prevChapter());
   $('btn-next').addEventListener('click', () => player.nextChapter());
   $('rate').addEventListener('change', (e) => player.setRate(Number(e.target.value)));
