@@ -1,16 +1,22 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import { createApp } from '../server/app.js';
 import { FIXTURES } from './helpers.js';
+import { sampleCard, startFakeCamera } from './fake-camera.js';
 
-let server; let base; let tmp;
+let server; let base; let tmp; let cam;
 
 before(async () => {
   tmp = await mkdtemp(path.join(os.tmpdir(), 'gopro-viewer-api-'));
-  const cfg = { host: '127.0.0.1', port: 0, roots: [FIXTURES], cacheDir: path.join(tmp, 'cache'), configFile: path.join(tmp, 'config.json'), accelHz: 25, map: { api: 'https://map.example/api', glyphs: 'https://map.example/styles', token: '', basemap: 'streets', labels: true }, logLevel: 'warn' };
+  cam = await startFakeCamera(sampleCard());
+  const cfg = {
+    host: '127.0.0.1', port: 0, roots: [FIXTURES], cacheDir: path.join(tmp, 'cache'), configFile: path.join(tmp, 'config.json'), accelHz: 25,
+    map: { api: 'https://map.example/api', glyphs: 'https://map.example/styles', token: '', basemap: 'streets', labels: true },
+    ledgerFile: path.join(tmp, 'import-ledger.json'), import: { dest: '', mode: 'all', camera: cam.url }, logLevel: 'warn',
+  };
   const app = createApp(cfg);
   server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.on('listening', r));
@@ -19,6 +25,7 @@ before(async () => {
 
 after(async () => {
   await new Promise((r) => server.close(r));
+  await cam.close();
   await rm(tmp, { recursive: true, force: true });
 });
 
@@ -122,4 +129,44 @@ test('UI and vendor assets are served', async () => {
     const r = await fetch(base + p);
     assert.equal(r.status, 200, p);
   }
+});
+
+test('import from the camera: snapshot, job, ledger, destination becomes a media root', async () => {
+  const post = (body) => json('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const until = async (check) => { for (let i = 0; i < 200; i++) { if (await check()) return true; await new Promise((r) => setTimeout(r, 25)); } return false; };
+  const snap = await json('/api/import');
+  assert.equal(snap.status, 200);
+  assert.equal(snap.body.camera.model, 'HERO13 Black');
+  assert.equal(snap.body.items.length, 3);
+  assert.ok(snap.body.items.every((it) => it.imported === null));
+  assert.deepEqual(snap.body.defaults, { dest: '', mode: 'all' });
+  assert.equal((await json('/api/import/job')).body, null);
+  assert.equal((await post({ dest: 'relative', mode: 'all', keys: ['x'] })).status, 400);
+  assert.equal((await post({ dest: tmp, mode: 'all', keys: [] })).status, 400);
+
+  const dest = path.join(tmp, 'footage');
+  const keys = snap.body.items.filter((it) => it.name.endsWith('.MP4')).map((it) => it.key);
+  const started = await post({ dest, mode: 'mp4', keys });
+  assert.equal(started.status, 202);
+  assert.equal(started.body.state, 'running');
+  assert.equal(started.body.dest, dest);
+  assert.ok(await until(async () => (await json('/api/import/job')).body.state !== 'running'), 'the job finishes');
+  const job = (await json('/api/import/job')).body;
+  assert.equal(job.state, 'done');
+  assert.deepEqual(job.items.map((it) => it.status), ['done', 'done']);
+  assert.equal(job.doneBytes, 30_000);
+  assert.equal((await stat(path.join(dest, '2026-09-05', 'GX010004.MP4'))).size, 10_000);
+
+  assert.ok((await json('/api/config')).body.roots.some((r) => r.path === dest), 'the destination joined the media roots');
+  assert.ok(await until(async () => JSON.parse(await readFile(path.join(tmp, 'config.json'), 'utf8')).roots.includes(dest)), 'and config.json says so');
+  const saved = JSON.parse(await readFile(path.join(tmp, 'config.json'), 'utf8'));
+  assert.deepEqual(saved.import, { dest, mode: 'mp4', camera: cam.url });
+  assert.equal(saved.ledgerFile, path.join(tmp, 'import-ledger.json'), 'a custom ledger path survives a save');
+  assert.equal(Object.keys(JSON.parse(await readFile(path.join(tmp, 'import-ledger.json'), 'utf8')).entries).length, 2);
+
+  const again = await json('/api/import');
+  assert.ok(again.body.items.filter((it) => it.name.endsWith('.MP4')).every((it) => it.imported?.dest === path.join(dest, '2026-09-05')));
+  assert.equal(again.body.items.find((it) => it.name.endsWith('.JPG')).imported, null);
+  assert.deepEqual(again.body.defaults, { dest, mode: 'mp4' });
+  assert.deepEqual((await json('/api/import/job', { method: 'DELETE' })).body, { cancelled: false });
 });

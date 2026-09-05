@@ -8,6 +8,7 @@ import { TrackMap } from './map.js';
 import { Charts } from './charts.js';
 import { Timeline } from './timeline.js';
 import { LibraryView } from './library.js';
+import { ImportDialog, jobSummary } from './import.js';
 import { Track } from './track.js';
 import { MotionModel } from './motion.js';
 import { Gauges } from './gauges.js';
@@ -62,6 +63,14 @@ const timeline = new Timeline($('timeline'), { onSeek: (t) => player.seek(t) });
 const charts = new Charts($('charts'), { onSeek: (t) => player.seek(t), onLayout: (left, right) => timeline.setInsets(left, right) });
 const gauges = new Gauges($('gauges'));
 const libraryView = new LibraryView({ list: $('library'), roots: $('roots'), search: $('search') }, { onSelect: selectRecording, onRemoveRoot: removeRoot });
+const importDialog = new ImportDialog($('import-dialog'), {
+  toast,
+  onProgress: (job) => setStatus(jobSummary(job), true),
+  onFinished: (job) => {
+    toast(jobSummary(job), job.state === 'done' ? 'info' : 'warn', 9000);
+    loadLibrary(api.rescan()); // the server rescans as the job ends; this shares that scan and shows the result
+  },
+});
 
 function onPlayerState(s) {
   $('btn-play').textContent = s.playing ? '❚❚' : '▶';
@@ -270,6 +279,7 @@ const KEYS = new Map([
 
 function onKeyDown(e) {
   if (['input', 'select', 'textarea'].includes((e.target.tagName || '').toLowerCase())) return;
+  if (document.querySelector('dialog[open]')) return; // a dialog owns the keyboard (Space must tick a box, not play)
   const action = KEYS.get(e.key) ?? KEYS.get(e.key.toLowerCase());
   if (!action) return;
   if (e.key === ' ' || e.key.startsWith('Arrow')) e.preventDefault();
@@ -294,6 +304,7 @@ function bindControls() {
     gauges.setAvailable(!!state.motion, !!state.motion?.hasGyro);
   });
   $('rescan-btn').addEventListener('click', () => loadLibrary(api.rescan()));
+  $('import-btn').addEventListener('click', () => importDialog.open());
   $('root-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = $('root-input').value.trim();
@@ -327,6 +338,7 @@ async function boot() {
   await applyMapConfig();
   const data = await loadLibrary();
   if (data && !data.recordings.length && !data.roots.length) $('root-input').focus();
+  importDialog.watch(); // an import started before a reload keeps reporting in the status bar
   window.addEventListener('resize', () => map.invalidate());
   setTimeout(() => map.invalidate(), 50);
 }

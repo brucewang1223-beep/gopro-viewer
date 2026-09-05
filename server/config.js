@@ -3,7 +3,8 @@
  *
  *   CLI    : --media <dir> (repeatable)  --port <n>  --host <ip>  --config <file>  --cache <dir>  --accel-hz <n>  --log-level <lvl>
  *   Env    : GOPRO_VIEWER_MEDIA (":"-separated), GOPRO_VIEWER_PORT, GOPRO_VIEWER_HOST, GOPRO_VIEWER_CACHE, GOPRO_VIEWER_CONFIG, LOG_LEVEL
- *   File   : config.json in the project root (see config.example.json). Roots added from the UI are persisted here.
+ *   File   : config.json in the project root (see config.example.json). Roots added from the UI and the
+ *            last import destination / mode are persisted here; `ledgerFile` and `import.camera` are file-only.
  *
  * The K2 map credentials live in the "map" block of config.json only (never in the
  * environment, never in a committed file): config.json is git-ignored.
@@ -17,6 +18,8 @@ export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.
 
 /** Basemaps offered by the UI; the matching style lives in web/styles/k2-<name>.json. */
 const BASEMAPS = ['streets', 'satellite'];
+/** Import modes: every card file with its LRV/THM sidecars, or MP4 files only. */
+export const IMPORT_MODES = ['all', 'mp4'];
 
 const DEFAULTS = Object.freeze({
   host: '127.0.0.1',
@@ -30,8 +33,14 @@ const DEFAULTS = Object.freeze({
     basemap: 'streets',
     labels: true,
   },
+  import: {
+    dest: '',        // last destination chosen in the import dialog (pre-filled next time)
+    mode: 'all',     // last mode chosen: all | mp4
+    camera: '',      // camera base URL override, e.g. http://172.21.165.51:8080; empty = find it on the USB network
+  },
   cacheDir: path.join(PROJECT_ROOT, '.cache'),
   configFile: path.join(PROJECT_ROOT, 'config.json'),
+  ledgerFile: path.join(PROJECT_ROOT, 'import-ledger.json'),   // outside .cache/: deleting the cache must not forget imports
   logLevel: 'info',
 });
 
@@ -96,6 +105,7 @@ function validate(cfg) {
   if (!Number.isInteger(cfg.port) || cfg.port < 0 || cfg.port > 65535) throw new Error(`Invalid port: ${cfg.port}`);
   if (!(cfg.accelHz > 0 && cfg.accelHz <= 200)) throw new Error(`Invalid accelHz: ${cfg.accelHz}`);
   if (!BASEMAPS.includes(cfg.map.basemap)) throw new Error(`Invalid map.basemap: ${cfg.map.basemap} (expected ${BASEMAPS.join(' | ')})`);
+  if (!IMPORT_MODES.includes(cfg.import.mode)) throw new Error(`Invalid import.mode: ${cfg.import.mode} (expected ${IMPORT_MODES.join(' | ')})`);
 }
 
 export async function loadConfig({ argv = process.argv.slice(2), env = process.env } = {}) {
@@ -109,9 +119,11 @@ export async function loadConfig({ argv = process.argv.slice(2), env = process.e
     host: first(cli.host, env.GOPRO_VIEWER_HOST, file.host, DEFAULTS.host),
     port: first(cli.port, numberOrUndefined(env.GOPRO_VIEWER_PORT), file.port, DEFAULTS.port),
     cacheDir: first(cli.cacheDir, env.GOPRO_VIEWER_CACHE, file.cacheDir ? path.resolve(file.cacheDir) : DEFAULTS.cacheDir),
+    ledgerFile: file.ledgerFile ? path.resolve(file.ledgerFile) : DEFAULTS.ledgerFile,
     accelHz: first(cli.accelHz, file.accelHz, DEFAULTS.accelHz),
     logLevel: first(cli.logLevel, env.LOG_LEVEL, file.logLevel, DEFAULTS.logLevel),
     map: { ...DEFAULTS.map, ...file.map },
+    import: { ...DEFAULTS.import, ...file.import },
     roots: mergeRoots(file.roots, env.GOPRO_VIEWER_MEDIA, cli.roots),
     help: !!cli.help,
   };
@@ -119,9 +131,10 @@ export async function loadConfig({ argv = process.argv.slice(2), env = process.e
   return cfg;
 }
 
-/** Persist the user-editable subset (roots, port, host, map) back to config.json. */
+/** Persist the user-editable subset (roots, port, host, map, import defaults) back to config.json. */
 export async function saveConfig(cfg) {
-  const out = { host: cfg.host, port: cfg.port, roots: cfg.roots, accelHz: cfg.accelHz, map: cfg.map };
+  const ledger = cfg.ledgerFile !== DEFAULTS.ledgerFile ? { ledgerFile: cfg.ledgerFile } : {};   // keep a custom ledger path, skip the default
+  const out = { host: cfg.host, port: cfg.port, roots: cfg.roots, accelHz: cfg.accelHz, map: cfg.map, import: cfg.import, ...ledger };
   await mkdir(path.dirname(cfg.configFile), { recursive: true });
   await writeFile(cfg.configFile, JSON.stringify(out, null, 2) + '\n', 'utf8');
 }

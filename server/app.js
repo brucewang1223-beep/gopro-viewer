@@ -14,12 +14,17 @@
  *   GET  /api/recordings/:id/export.gpx
  *   GET  /api/recordings/:id/export.geojson    driven route as a FeatureCollection of LineStrings
  *   GET  /api/recordings/:id/export.csv?stream=gps|accl|gyro
+ *   GET  /api/import                       camera on USB + card files, each marked if imported before
+ *   POST /api/import       {dest, mode, keys}   start copying the chosen files into <dest>/<date>/ (202; 409 while one runs)
+ *   GET  /api/import/job                   progress of the current / last import
+ *   DELETE /api/import/job                 cancel the running import
  *   GET  /api/map/*                        K2 map tiles / TileJSON (token added server-side)
  *   GET  /api/map-fonts/*                  K2 glyph ranges
  *   /  , /vendor/maplibre/*, /vendor/uplot/*  static UI + vendored libraries from node_modules
  */
 
 import express from 'express';
+import os from 'node:os';
 import path from 'node:path';
 import { stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -28,6 +33,8 @@ import { Library } from './library.js';
 import { TelemetryService } from './telemetry.js';
 import { toGpx, toCsv, toGeoJson } from './export.js';
 import { tileProxy, fontProxy } from './map.js';
+import { ImportLedger } from './import-ledger.js';
+import { Importer } from './importer.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
 
@@ -58,7 +65,8 @@ function apiNotFound(req, res) {
 
 // Express recognises error handlers by their arity: the fourth parameter must stay.
 function errorHandler(err, req, res, _next) {
-  log.error(`${req.method} ${req.originalUrl} failed`, err);
+  if (err.status >= 400 && err.status < 500) log.warn(`${req.method} ${req.originalUrl} → ${err.status}: ${err.message}`); // rejected input, no stack
+  else log.error(`${req.method} ${req.originalUrl} failed`, err);
   if (res.headersSent) return;
   res.status(err.status ?? 500).json({ error: err.message ?? 'internal error', type: err.name });
 }
@@ -78,13 +86,30 @@ async function resolveDirectory(input) {
   return { path: dir };
 }
 
-function libraryRoutes(router, { cfg, library }) {
-  const setRoots = async (roots) => {
+/** `~` and `~/…` as typed in the import dialog → the home directory. */
+function expandHome(input) {
+  const s = typeof input === 'string' ? input.trim() : '';
+  if (s === '~' || s.startsWith('~/')) return path.join(os.homedir(), s.slice(1));
+  return s;
+}
+
+/** Media roots: the one place that changes cfg.roots, the library and config.json together. */
+function rootStore(cfg, library) {
+  const set = async (roots) => {
     cfg.roots = roots;
     library.roots = roots;
     try { await saveConfig(cfg); } catch (e) { log.warn(`config not saved: ${e.message}`); }
+    return library.scan();
   };
+  const covered = (dir) => cfg.roots.some((root) => dir === root || dir.startsWith(root + path.sep));
+  return {
+    set,
+    /** Rescans, adding `dir` as a root first unless a configured root already contains it. */
+    include: (dir) => (covered(dir) ? library.scan() : set([...cfg.roots, dir])),
+  };
+}
 
+function libraryRoutes(router, { cfg, library, roots }) {
   router.get('/health', (req, res) => res.json({ ok: true, name: 'gopro-viewer', node: process.version, scannedAt: library.scannedAt }));
   router.get('/config', (req, res) => {
     const { host, port, cacheDir, accelHz, map } = cfg;
@@ -95,14 +120,13 @@ function libraryRoutes(router, { cfg, library }) {
   router.post('/roots', asyncRoute(async (req, res) => {
     const dir = await resolveDirectory(req.body?.path);
     if (dir.error) return res.status(400).json({ error: dir.error });
-    if (!cfg.roots.includes(dir.path)) await setRoots([...cfg.roots, dir.path]);
-    return res.json(await library.scan());
+    if (cfg.roots.includes(dir.path)) return res.json(await library.scan());
+    return res.json(await roots.set([...cfg.roots, dir.path]));
   }));
   router.delete('/roots/:id', asyncRoute(async (req, res) => {
-    const roots = cfg.roots.filter((root) => shortId('root', root) !== req.params.id);
-    if (roots.length === cfg.roots.length) return res.status(404).json({ error: 'root not found' });
-    await setRoots(roots);
-    return res.json(await library.scan());
+    const kept = cfg.roots.filter((root) => shortId('root', root) !== req.params.id);
+    if (kept.length === cfg.roots.length) return res.status(404).json({ error: 'root not found' });
+    return res.json(await roots.set(kept));
   }));
   router.post('/rescan', asyncRoute(async (req, res) => res.json(await library.scan())));
   router.get('/library', asyncRoute(async (req, res) => {
@@ -159,18 +183,42 @@ function telemetryRoutes(router, { library, telemetry }) {
   }));
 }
 
+/** Import from the camera: snapshot, start (remembering destination + mode in config.json), progress, cancel. */
+function importRoutes(router, { cfg, importer, roots }) {
+  router.get('/import', asyncRoute(async (req, res) => {
+    const snapshot = await importer.snapshot();
+    res.json({ ...snapshot, defaults: { dest: cfg.import.dest, mode: cfg.import.mode } });
+  }));
+  router.post('/import', asyncRoute(async (req, res) => {
+    const { dest, mode, keys } = req.body ?? {};
+    const job = await importer.start({ dest: expandHome(dest), mode, keys });
+    cfg.import = { ...cfg.import, dest: job.dest, mode };
+    try { await saveConfig(cfg); } catch (e) { log.warn(`config not saved: ${e.message}`); }
+    res.status(202).json(job);
+  }));
+  router.get('/import/job', (req, res) => res.json(importer.job?.toJSON() ?? null));
+  router.delete('/import/job', (req, res) => res.json({ cancelled: importer.cancel() }));
+  // whatever arrived becomes part of the library: the destination is added as a media root if no root covers it
+  importer.onFinished = async (job) => {
+    if (job.items.some((it) => it.status === 'done')) await roots.include(job.dest);
+  };
+}
+
 /* ---------- app ---------- */
 
 export function createApp(cfg) {
   const app = express();
   const library = new Library({ roots: cfg.roots, cacheDir: cfg.cacheDir });
   const telemetry = new TelemetryService({ cacheDir: cfg.cacheDir, accelHz: cfg.accelHz });
-  Object.assign(app.locals, { library, telemetry, config: cfg });
+  const importer = new Importer({ ledger: new ImportLedger(cfg.ledgerFile), cameraUrl: cfg.import.camera });
+  const roots = rootStore(cfg, library);
+  Object.assign(app.locals, { library, telemetry, importer, config: cfg });
 
   const api = express.Router();
-  libraryRoutes(api, { cfg, library });
+  libraryRoutes(api, { cfg, library, roots });
   mediaRoutes(api, { library });
   telemetryRoutes(api, { library, telemetry });
+  importRoutes(api, { cfg, importer, roots });
   api.use('/map', tileProxy(cfg.map));
   api.use('/map-fonts', fontProxy(cfg.map));
 

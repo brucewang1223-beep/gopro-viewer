@@ -36,7 +36,7 @@ button, input, select { font: inherit; color: inherit; }
 input[type="text"], input[type="search"] { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; outline: none; }
 input[type="text"]:focus, input[type="search"]:focus { border-color: var(--accent); }
 .status { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
-.status.busy::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-2); margin-right: 6px; animation: pulse 1s infinite; }
+.status.busy::before, .dialog-sub.busy::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-2); margin-right: 6px; animation: pulse 1s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 
 .btn { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; cursor: pointer; white-space: nowrap; }
@@ -173,6 +173,44 @@ video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 @keyframes halo { 0% { transform: scale(.55); opacity: .95; } 100% { transform: scale(1.35); opacity: 0; } }
 .pos-marker .arrow { position: absolute; left: 50%; top: 50%; width: 0; height: 0; margin: -11px 0 0 -9px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 21px solid var(--accent-2); filter: drop-shadow(0 0 3px rgba(0,0,0,.95)); transform-origin: 50% 55%; }
 .pos-marker.stopped .arrow { border-bottom-color: var(--accent); }
+
+/* import dialog */
+.dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 0; width: min(880px, 92vw); max-height: 86vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+.dialog:not([open]) { display: none; }
+.dialog::backdrop { background: rgba(0,0,0,.55); }
+.dialog-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.dialog-head h2 { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
+.dialog-sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-variant-numeric: tabular-nums; }
+.dialog-foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); }
+.import-options { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.import-dest { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.import-dest input { flex: 1; font-family: var(--mono); }
+.import-modes { display: flex; gap: 18px; }
+.import-modes small { color: var(--muted); }
+.import-list { overflow-y: auto; flex: 1; min-height: 140px; padding: 6px 10px; }
+.import-row { display: grid; grid-template-columns: 22px minmax(170px, 1.3fr) 118px 74px minmax(150px, 1fr); align-items: center; gap: 10px; padding: 6px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.import-row:hover { background: var(--panel-2); }
+.import-row.head { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; position: sticky; top: 0; background: var(--panel); cursor: default; z-index: 1; }
+.import-row.head:hover { background: var(--panel); }
+.import-row.imported { color: var(--muted); }
+.import-row input { accent-color: var(--accent); margin: 0; }
+.import-name { display: flex; align-items: center; gap: 6px; overflow: hidden; }
+.import-name b { font-family: var(--mono); font-weight: 600; }
+.import-row.imported .import-name b { font-weight: 400; }
+.import-when, .import-size { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.import-size { text-align: right; }
+.import-status { display: flex; flex-direction: column; gap: 3px; overflow: hidden; font-variant-numeric: tabular-nums; }
+.import-status > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-status.new { color: var(--accent); }
+.import-status.ok { color: var(--ok); }
+.import-status.bad { color: var(--bad); }
+.import-status.busy { color: var(--accent-2); }
+.import-status.muted { color: var(--muted); }
+.import-empty { color: var(--muted); padding: 28px 16px; text-align: center; line-height: 1.6; white-space: pre-line; }
+.bar { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; }
+.bar > div { height: 100%; width: 0; background: var(--accent); transition: width .3s linear; }
+.import-progress { padding: 0 16px 8px; }
+.import-progress .bar { height: 6px; }
 
 /* toasts */
 .toasts { position: fixed; right: 14px; bottom: 14px; display: flex; flex-direction: column; gap: 6px; z-index: 2000; }

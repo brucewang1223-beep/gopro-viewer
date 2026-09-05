@@ -3,7 +3,7 @@
 Local web app that plays GoPro footage with its embedded telemetry replayed in sync:
 GPS track on a map, live HUD (speed, altitude, position, fix quality, clock, g-force),
 round G-force / gyro / attitude gauges on the video, speed / altitude / G-force / gyro
-charts, chapter-aware timeline, GPX and CSV export.
+charts, chapter-aware timeline, GPX and CSV export, and import straight from the camera over USB.
 Nothing leaves your machine; the server binds to `127.0.0.1`.
 
 Spec and design decisions: [`docs/SPEC.md`](docs/SPEC.md).
@@ -102,6 +102,24 @@ with gravity removed (0 at rest, ~0.2–0.3 g in normal braking, 0.5 g is a hard
 with the dominant direction. Playback is always muted: this is a telemetry review tool, not a
 media player, so the audio track is never rendered.
 
+### Import from the camera
+
+*Import from camera* (header bar) copies clips straight from a GoPro connected by USB — no card
+reader, no Finder. Set the camera's USB connection to **GoPro Connect** (Preferences › Connections ›
+USB Connection; that is the default) and plug it in: it shows up as a small USB network, not as a
+drive, and the viewer talks to it over the Open GoPro HTTP API. The dialog lists the card, you type a
+destination folder (created if missing; `~` works) and pick **All files** (each clip's MP4 with its LRV
+proxy and THM thumbnail, plus any photos) or **MP4 only**. Clips are filed under
+`<destination>/<YYYY-MM-DD>/` by their recording date, verified by byte count, and the destination
+joins the library as a media root when the job ends.
+
+Everything imported is remembered in `import-ledger.json`: a clip imported before is listed unticked
+and labelled *imported 2026-09-05 → …/2026-09-05*, whether or not the local copy still exists, and is
+only fetched again when you tick it (a copy that is still complete at the destination is verified,
+not downloaded). *Stop* halts the job; the file in flight stays as `.part` and resumes next time.
+A HERO13 transfers at the USB 2.0 ceiling, about 43 MB/s (≈ 13 minutes for 33 GB) — close the dialog
+and keep using the viewer; the status bar follows the job.
+
 ### Export
 
 *Export* gives the selected recording as **GPX** (fixed track points with elevation, time and
@@ -128,12 +146,14 @@ Multiple files are treated as consecutive chapters of one recording.
 server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header, sensor
           orientation), gpmf-probe.js (scan-time GPS fix probe), decode.js (gopro-telemetry
           wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), app.js
-          (routes), export.js (GPX/GeoJSON/CSV), map.js (K2 tile + glyph proxy), geo.js,
-          config.js, json-cache.js, ids.js, log.js, index.js
+          (routes), export.js (GPX/GeoJSON/CSV), map.js (K2 tile + glyph proxy), importer.js
+          (import plan + job), gopro-camera.js (Open GoPro HTTP client over USB), import-ledger.js,
+          geo.js, config.js, json-cache.js, ids.js, log.js, index.js
 web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player,
           map (+ map-route, map-controls, map-shields), charts, timeline, track, motion, gauges, hud,
-          stats, library, util, api; styles/ holds the two K2 MapLibre styles
-tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md)
+          stats, library, import (dialog), util, api; styles/ holds the two K2 MapLibre styles
+tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md) + a fake camera
+          (fake-camera.js) for the import tests
 scripts/  dump-telemetry.js (CLI), fetch-samples.sh, macos-launch-agent.sh (run at login)
 docs/     SPEC.md
 .cache/   per-file metadata and telemetry cache (safe to delete)
@@ -142,7 +162,7 @@ docs/     SPEC.md
 ## Development
 
 ```bash
-npm test          # 42 tests: demuxer, library, telemetry, exports, HTTP API, map proxy, route geometry
+npm test          # 59 tests: demuxer, library, telemetry, exports, HTTP API, map proxy, route geometry, import
 npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>
@@ -154,7 +174,9 @@ LOG_LEVEL=debug npm start -- --media <dir>
 Chrome on Apple Silicon for HEVC, or enable the LRV proxy (the app switches automatically
 when a proxy exists). "No usable GPS fix": the camera never locked (GPS off, indoors,
 first seconds after power-on); the video still plays. Stale data after re-encoding a file:
-delete `.cache/`.
+delete `.cache/`. "No camera" in the import dialog: the camera is asleep, its USB connection is set
+to MTP instead of GoPro Connect, or another program (MacDroid, adb) is holding the USB device — wake
+it, change the mode, quit the program, then *Look again*.
 
 ## Credits
 

@@ -19,6 +19,7 @@
       <input id="root-input" type="text" placeholder="Add media folder (absolute path, e.g. /Volumes/GOPRO/DCIM)" spellcheck="false">
       <button type="submit" class="btn">Add folder</button>
       <button type="button" id="rescan-btn" class="btn btn-ghost" title="Rescan media roots">Rescan</button>
+      <button type="button" id="import-btn" class="btn" title="Copy new clips from the GoPro connected by USB into a folder of your choice">Import from camera</button>
     </form>
     <div id="status" class="status" aria-live="polite"></div>
   </header>
@@ -103,6 +104,31 @@
 
     <section class="charts" id="charts"></section>
   </main>
+
+  <dialog id="import-dialog" class="dialog">
+    <div class="dialog-head">
+      <h2>Import from camera</h2>
+      <span id="import-camera" class="dialog-sub" aria-live="polite"></span>
+      <button type="button" id="import-close" class="btn btn-ghost btn-icon" title="Close (Esc) — a running import carries on">✕</button>
+    </div>
+    <div class="import-options">
+      <label class="import-dest">Destination
+        <input id="import-dest" type="text" placeholder="/Users/you/GoPro Footage — clips are filed under <destination>/<YYYY-MM-DD>/" spellcheck="false">
+      </label>
+      <div class="import-modes">
+        <label class="ctl toggle" title="Every clip with the camera's LRV proxy and THM thumbnail (photos too)"><input type="radio" name="import-mode" value="all" checked> All files <small>MP4 + LRV + THM</small></label>
+        <label class="ctl toggle" title="MP4 files only — no proxies, thumbnails or photos"><input type="radio" name="import-mode" value="mp4"> MP4 only</label>
+      </div>
+    </div>
+    <div id="import-list" class="import-list"></div>
+    <div id="import-progress" class="import-progress hidden"><div class="bar"><div id="import-bar"></div></div></div>
+    <div class="dialog-foot">
+      <span id="import-summary" class="dialog-sub"></span>
+      <button type="button" id="import-retry" class="btn btn-ghost" title="Probe the camera again">Look again</button>
+      <button type="button" id="import-stop" class="btn hidden" title="Stop the import — the file in flight is kept as .part and resumes next time">Stop</button>
+      <button type="button" id="import-start" class="btn btn-primary" disabled>Import</button>
+    </div>
+  </dialog>
 
   <div id="toasts" class="toasts"></div>
 

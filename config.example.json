@@ -12,5 +12,10 @@
     "token": "your-k2-map-token",
     "basemap": "streets",
     "labels": true
+  },
+  "import": {
+    "dest": "/Users/brucewang/Movies/GoPro",
+    "mode": "all",
+    "camera": ""
   }
 }
