@@ -117,12 +117,18 @@
         <button type="button" id="import-choose" class="btn" title="Pick the destination in the Mac's folder panel">Choose folder…</button>
       </div>
       <div class="import-modes">
-        <label class="ctl toggle" title="Every clip with the camera's LRV proxy (photos too); THM thumbnails are never imported"><input type="radio" name="import-mode" value="all" checked> All files <small>MP4 + LRV</small></label>
-        <label class="ctl toggle" title="MP4 files only — no proxies, no photos"><input type="radio" name="import-mode" value="mp4"> MP4 only</label>
+        <span class="import-modes-label">With each clip</span>
+        <label class="ctl toggle" title="The camera's low-resolution proxy (GL….LRV) — the viewer plays it when the full file will not decode"><input type="checkbox" id="import-lrv" checked> LRV proxy</label>
+        <label class="ctl toggle" title="The camera's thumbnail (….THM) — shown in the library sidebar"><input type="checkbox" id="import-thm"> THM thumbnail</label>
       </div>
     </div>
     <div id="import-list" class="import-list"></div>
     <div id="import-progress" class="import-progress hidden"><div class="bar"><div id="import-bar"></div></div></div>
+    <div id="import-prompt" class="import-prompt hidden">
+      <span id="import-prompt-text"></span>
+      <button type="button" id="import-keep" class="btn btn-ghost" title="Leave the clips on the camera">Keep on camera</button>
+      <button type="button" id="import-delete" class="btn btn-danger" title="Delete the clips this import brought in — and their LRV / THM — from the camera">Delete from camera</button>
+    </div>
     <div class="dialog-foot">
       <span id="import-summary" class="dialog-sub"></span>
       <button type="button" id="import-retry" class="btn btn-ghost" title="Probe the camera again">Look again</button>

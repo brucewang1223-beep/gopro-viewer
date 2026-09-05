@@ -4,7 +4,8 @@
  *   CLI    : --media <dir> (repeatable)  --port <n>  --host <ip>  --config <file>  --cache <dir>  --accel-hz <n>  --log-level <lvl>
  *   Env    : GOPRO_VIEWER_MEDIA (":"-separated), GOPRO_VIEWER_PORT, GOPRO_VIEWER_HOST, GOPRO_VIEWER_CACHE, GOPRO_VIEWER_CONFIG, LOG_LEVEL
  *   File   : config.json in the project root (see config.example.json). Roots added from the UI and the
- *            last import destination / mode are persisted here; `ledgerFile` and `import.camera` are file-only.
+ *            last import destination / sidecar choices are persisted here; `ledgerFile`, `import.camera`
+ *            and `map.provider` are file-only.
  *
  * The K2 map credentials live in the "map" block of config.json only (never in the
  * environment, never in a committed file): config.json is git-ignored.
@@ -16,10 +17,10 @@ import { fileURLToPath } from 'node:url';
 
 export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Basemaps offered by the UI; the matching style lives in web/styles/k2-<name>.json. */
+/** Basemaps offered by the UI; the matching style lives in web/styles/<provider>-<name>.json. */
 const BASEMAPS = ['streets', 'satellite'];
-/** Import modes: every card file with its LRV/THM sidecars, or MP4 files only. */
-export const IMPORT_MODES = ['all', 'mp4'];
+/** Where the basemaps come from: OpenStreetMap data (OpenFreeMap vector tiles + Esri imagery) or the K2 map service. */
+export const MAP_PROVIDERS = ['osm', 'k2'];
 
 const DEFAULTS = Object.freeze({
   host: '127.0.0.1',
@@ -27,6 +28,7 @@ const DEFAULTS = Object.freeze({
   roots: [],
   accelHz: 25,
   map: {
+    provider: 'osm', // osm (OpenFreeMap tiles + Esri imagery, no key) | k2 (map.lumobility.com, needs `token`)
     api: 'https://map.lumobility.com/api',
     glyphs: 'https://map.lumobility.com/map-styles',
     token: '',
@@ -35,7 +37,8 @@ const DEFAULTS = Object.freeze({
   },
   import: {
     dest: '',        // last destination chosen in the import dialog (pre-filled next time)
-    mode: 'all',     // last mode chosen: all | mp4
+    lrv: true,       // copy each clip's LRV proxy (last choice in the dialog)
+    thm: false,      // copy each clip's THM thumbnail (last choice in the dialog)
     camera: '',      // camera base URL override, e.g. http://172.21.165.51:8080; empty = find it on the USB network
   },
   cacheDir: path.join(PROJECT_ROOT, '.cache'),
@@ -101,11 +104,18 @@ function mergeRoots(fileRoots, envRoots, cliRoots) {
   return [...new Set(all.map((r) => path.resolve(r)))];
 }
 
+/** The import block, known keys only (an older config.json may still carry `mode`). */
+function importSettings(file = {}) {
+  const pick = (key) => file[key] ?? DEFAULTS.import[key];
+  return { dest: pick('dest'), lrv: pick('lrv'), thm: pick('thm'), camera: pick('camera') };
+}
+
 function validate(cfg) {
   if (!Number.isInteger(cfg.port) || cfg.port < 0 || cfg.port > 65535) throw new Error(`Invalid port: ${cfg.port}`);
   if (!(cfg.accelHz > 0 && cfg.accelHz <= 200)) throw new Error(`Invalid accelHz: ${cfg.accelHz}`);
   if (!BASEMAPS.includes(cfg.map.basemap)) throw new Error(`Invalid map.basemap: ${cfg.map.basemap} (expected ${BASEMAPS.join(' | ')})`);
-  if (!IMPORT_MODES.includes(cfg.import.mode)) throw new Error(`Invalid import.mode: ${cfg.import.mode} (expected ${IMPORT_MODES.join(' | ')})`);
+  if (!MAP_PROVIDERS.includes(cfg.map.provider)) throw new Error(`Invalid map.provider: ${cfg.map.provider} (expected ${MAP_PROVIDERS.join(' | ')})`);
+  if (typeof cfg.import.lrv !== 'boolean' || typeof cfg.import.thm !== 'boolean') throw new Error('import.lrv and import.thm must be true or false');
 }
 
 export async function loadConfig({ argv = process.argv.slice(2), env = process.env } = {}) {
@@ -123,7 +133,7 @@ export async function loadConfig({ argv = process.argv.slice(2), env = process.e
     accelHz: first(cli.accelHz, file.accelHz, DEFAULTS.accelHz),
     logLevel: first(cli.logLevel, env.LOG_LEVEL, file.logLevel, DEFAULTS.logLevel),
     map: { ...DEFAULTS.map, ...file.map },
-    import: { ...DEFAULTS.import, ...file.import },
+    import: importSettings(file.import),
     roots: mergeRoots(file.roots, env.GOPRO_VIEWER_MEDIA, cli.roots),
     help: !!cli.help,
   };
@@ -131,7 +141,7 @@ export async function loadConfig({ argv = process.argv.slice(2), env = process.e
   return cfg;
 }
 
-/** Persist the user-editable subset (roots, port, host, map, import defaults) back to config.json. */
+/** Persist the user-editable subset (roots, port, host, map, import choices) back to config.json. */
 export async function saveConfig(cfg) {
   const ledger = cfg.ledgerFile !== DEFAULTS.ledgerFile ? { ledgerFile: cfg.ledgerFile } : {};   // keep a custom ledger path, skip the default
   const out = { host: cfg.host, port: cfg.port, roots: cfg.roots, accelHz: cfg.accelHz, map: cfg.map, import: cfg.import, ...ledger };

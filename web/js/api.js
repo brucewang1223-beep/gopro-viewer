@@ -21,6 +21,7 @@ export const api = {
   startImport: (body) => request('/api/import', { method: 'POST', body: JSON.stringify(body) }),
   importJob: () => request('/api/import/job'),
   cancelImport: () => request('/api/import/job', { method: 'DELETE' }),
+  deleteImported: (keys) => request('/api/import/delete', { method: 'POST', body: JSON.stringify({ keys }) }),
   mediaUrl: (fileId) => `/api/media/${encodeURIComponent(fileId)}`,
   thumbUrl: (fileId) => `/api/thumb/${encodeURIComponent(fileId)}`,
   exportUrl: (recordingId, kind, stream) => `/api/recordings/${encodeURIComponent(recordingId)}/export.${kind}${stream ? `?stream=${stream}` : ''}`,

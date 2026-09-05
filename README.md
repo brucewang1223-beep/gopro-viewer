@@ -12,8 +12,8 @@ Spec and design decisions: [`docs/SPEC.md`](docs/SPEC.md).
 
 Node.js ≥ 20 (tested on 22 and 24). A browser that decodes your footage:
 H.264 (`GH…` files) plays everywhere; HEVC (`GX…` files) plays in Safari and in
-Chrome on Apple Silicon Macs. The basemap needs internet access and a K2 map token
-(see below); everything else works offline.
+Chrome on Apple Silicon Macs. The basemap needs internet access (no key or account:
+OpenStreetMap data and Esri imagery by default, see below); everything else works offline.
 
 ## Quick start
 
@@ -27,17 +27,22 @@ npm start -- --media /Volumes/GOPRO/DCIM
 You can also add folders from the header bar in the UI (persisted to `config.json`),
 or create `config.json` from `config.example.json`. All options: `npm start -- --help`.
 
-The basemap comes from the K2 map service (`map.lumobility.com`). Put your token in the
-`map` block of `config.json` — that file is git-ignored, and the server signs every tile
-request itself, so the token never reaches the browser and never lands in a style file:
+The basemaps are drawn in the K2 street and satellite-hybrid styles. Out of the box
+(`"map": { "provider": "osm" }`) the data comes from OpenStreetMap — vector tiles from
+[OpenFreeMap](https://openfreemap.org) (the whole world to z14, no key, no quota) with the
+label overlay on Esri World Imagery for the satellite view — fetched by the browser directly.
+`"provider": "k2"` switches the same two styles to the K2 map service (`map.lumobility.com`),
+which needs a token in the `map` block of `config.json` (git-ignored; the server signs every
+tile request itself, so the token never reaches the browser):
 
 ```json
-"map": { "token": "…", "basemap": "streets", "labels": true }
+"map": { "provider": "k2", "token": "…", "basemap": "streets", "labels": true }
 ```
 
-Without a token the app still runs; the map pane stays empty and says so. K2 covers the
-UAE in detail (vector to z14, imagery to z19) and the rest of the world coarsely (vector
-to z7, imagery to z12), so footage shot far outside the UAE has no basemap when zoomed in.
+K2 covers the UAE in detail (vector to z14, imagery to z19) and the rest of the world
+coarsely (vector to z7, imagery to z12); the OSM provider covers the world evenly. The OSM
+styles are derived from the K2 ones by `node scripts/make-osm-styles.js` — change a K2 style,
+rerun it, and the test suite checks the derived files are current.
 
 Try it without a camera: `npm run samples` downloads GoPro's public sample clips into
 `samples/`, then `npm start -- --media samples`.
@@ -67,7 +72,7 @@ blue and the remaining part in grey, the pulsing arrow is the current position. 
 pan freely — the first button top-left (or `F`) fits the whole route again, the second
 centres on the current position. "Speed colours" switches the route to a speed-coloured
 rendering with the remaining part dimmed. The card at the bottom-left switches between
-the **Map** (K2 vector) and **Satellite** (K2 imagery) basemaps — `B` cycles them — and
+the **Map** and **Satellite** basemaps — `B` cycles them — and
 the Labels chip on the satellite card hides the place and road labels over the imagery.
 The choice is remembered per browser; `config.json` only sets the first-run default.
 
@@ -109,17 +114,20 @@ reader, no Finder. Set the camera's USB connection to **GoPro Connect** (Prefere
 USB Connection; that is the default) and plug it in: it shows up as a small USB network, not as a
 drive, and the viewer talks to it over the Open GoPro HTTP API. The dialog lists the card; *Choose
 folder…* opens the Mac's own folder panel for the destination (it starts on the folder you used last
-time), and you pick **All files** (each clip's MP4 with its LRV proxy, plus any photos) or **MP4 only**
-— THM thumbnails are never copied. Clips are filed under `<destination>/<YYYY-MM-DD>/` by their
-recording date, verified by byte count, and the destination joins the library as a media root when
-the job ends.
+time). With each clip you can take its **LRV proxy** (ticked by default — the viewer plays it when
+the full file will not decode) and its **THM thumbnail** (unticked by default — the library's
+sidebar picture); the choices are remembered. Clips are filed under `<destination>/<YYYY-MM-DD>/` by
+their recording date, verified by byte count, and the destination joins the library as a media
+root when the job ends. Then the dialog asks whether to **delete the clips it just brought in from
+the camera** (their LRV and THM go with them) — *Keep on camera* leaves the card alone. Only clips
+that arrived completely in that import can be deleted this way.
 
 Everything imported is remembered in `import-ledger.json`: a clip imported before is listed unticked
 and labelled *imported 2026-09-05 → …/2026-09-05*, whether or not the local copy still exists, and is
 only fetched again when you tick it (a copy that is still complete at the destination is verified,
 not downloaded). *Stop* halts the job; the file in flight stays as `.part` and resumes next time.
 A HERO13 transfers at the USB 2.0 ceiling, about 43 MB/s (≈ 13 minutes for 33 GB) — close the dialog
-and keep using the viewer; the status bar follows the job.
+and keep using the viewer; the status bar follows the job and the dialog comes back when it is done.
 
 ### Export
 
@@ -152,10 +160,12 @@ server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header,
           folder-picker.js (macOS folder panel), geo.js, config.js, json-cache.js, ids.js, log.js, index.js
 web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player,
           map (+ map-route, map-controls, map-shields), charts, timeline, track, motion, gauges, hud,
-          stats, library, import (dialog), util, api; styles/ holds the two K2 MapLibre styles
+          stats, library, import (dialog), util, api; styles/ holds the two K2 MapLibre styles and the
+          two OSM styles derived from them
 tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md) + a fake camera
           (fake-camera.js) for the import tests
-scripts/  dump-telemetry.js (CLI), fetch-samples.sh, macos-launch-agent.sh (run at login)
+scripts/  dump-telemetry.js (CLI), make-osm-styles.js (K2 styles → OSM styles), fetch-samples.sh,
+          macos-launch-agent.sh (run at login)
 docs/     SPEC.md
 .cache/   per-file metadata and telemetry cache (safe to delete)
 ```
@@ -163,7 +173,7 @@ docs/     SPEC.md
 ## Development
 
 ```bash
-npm test          # 60 tests: demuxer, library, telemetry, exports, HTTP API, map proxy, route geometry, import
+npm test          # 66 tests: demuxer, library, telemetry, exports, HTTP API, map proxy + OSM styles, route geometry, import
 npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>

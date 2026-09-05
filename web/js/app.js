@@ -317,7 +317,7 @@ function bindControls() {
   document.addEventListener('keydown', onKeyDown);
 }
 
-/** Basemap defaults from config.json, plus a warning when the K2 token is missing. */
+/** Map provider and basemap defaults from config.json, plus a warning when K2 is chosen without a token. */
 async function applyMapConfig() {
   let cfg;
   try { cfg = (await api.config()).map; } catch { return; }
@@ -325,7 +325,8 @@ async function applyMapConfig() {
   const saved = savedMapPrefs();
   if (saved.basemap == null && cfg.basemap) map.setBasemap(cfg.basemap, { user: false });
   if (saved.labels == null) map.setLabels(cfg.labels !== false, { user: false });
-  if (!cfg.configured) toast('No map token configured — add map.token to config.json to load the K2 basemap.', 'warn', 12000);
+  if (cfg.provider) map.setProvider(cfg.provider);
+  if (cfg.provider === 'k2' && !cfg.configured) toast('No map token configured — add map.token to config.json to load the K2 basemap, or set map.provider to "osm".', 'warn', 12000);
 }
 
 /* ---------- boot ---------- */

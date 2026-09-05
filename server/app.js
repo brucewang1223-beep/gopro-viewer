@@ -16,9 +16,10 @@
  *   GET  /api/recordings/:id/export.csv?stream=gps|accl|gyro
  *   GET  /api/import                       camera on USB + card files, each marked if imported before
  *   POST /api/import/choose-folder {current}   native macOS folder panel on the server's screen → { path | null }
- *   POST /api/import       {dest, mode, keys}   start copying the chosen files into <dest>/<date>/ (202; 409 while one runs)
+ *   POST /api/import       {dest, keys, lrv, thm}   start copying the chosen clips (+ LRV / THM) into <dest>/<date>/ (202; 409 while one runs)
  *   GET  /api/import/job                   progress of the current / last import
  *   DELETE /api/import/job                 cancel the running import
+ *   POST /api/import/delete {keys}         delete clips the last import brought in from the camera
  *   GET  /api/map/*                        K2 map tiles / TileJSON (token added server-side)
  *   GET  /api/map-fonts/*                  K2 glyph ranges
  *   /  , /vendor/maplibre/*, /vendor/uplot/*  static UI + vendored libraries from node_modules
@@ -108,7 +109,7 @@ function libraryRoutes(router, { cfg, library, roots }) {
   router.get('/config', (req, res) => {
     const { host, port, cacheDir, accelHz, map } = cfg;
     // the map token stays on the server: the UI only needs to know whether one is set
-    const mapInfo = { basemap: map.basemap, labels: map.labels, configured: !!map.token };
+    const mapInfo = { provider: map.provider, basemap: map.basemap, labels: map.labels, configured: !!map.token };
     res.json({ host, port, cacheDir, accelHz, map: mapInfo, roots: library.rootRecords() });
   });
   router.post('/roots', asyncRoute(async (req, res) => {
@@ -177,25 +178,27 @@ function telemetryRoutes(router, { library, telemetry }) {
   }));
 }
 
-/** Import from the camera: snapshot, folder panel, start (remembering destination + mode in config.json), progress, cancel. */
+/** Import from the camera: snapshot, folder panel, start (remembering the choices in config.json), progress, cancel, delete from the camera. */
 function importRoutes(router, { cfg, importer, roots }) {
   router.get('/import', asyncRoute(async (req, res) => {
     const snapshot = await importer.snapshot();
-    res.json({ ...snapshot, defaults: { dest: cfg.import.dest, mode: cfg.import.mode } });
+    const { dest, lrv, thm } = cfg.import;
+    res.json({ ...snapshot, defaults: { dest, lrv, thm } });
   }));
   router.post('/import/choose-folder', asyncRoute(async (req, res) => {
     const current = typeof req.body?.current === 'string' ? req.body.current : cfg.import.dest;
     res.json({ path: await chooseFolder({ prompt: 'Import the clips into this folder (a YYYY-MM-DD sub-folder is created per recording day)', startDir: current }) });
   }));
   router.post('/import', asyncRoute(async (req, res) => {
-    const { dest, mode, keys } = req.body ?? {};
-    const job = await importer.start({ dest, mode, keys });
-    cfg.import = { ...cfg.import, dest: job.dest, mode };
+    const { dest, keys, lrv, thm } = req.body ?? {};
+    const job = await importer.start({ dest, keys, lrv, thm });
+    cfg.import = { ...cfg.import, dest: job.dest, lrv, thm };
     try { await saveConfig(cfg); } catch (e) { log.warn(`config not saved: ${e.message}`); }
     res.status(202).json(job);
   }));
   router.get('/import/job', (req, res) => res.json(importer.job?.toJSON() ?? null));
   router.delete('/import/job', (req, res) => res.json({ cancelled: importer.cancel() }));
+  router.post('/import/delete', asyncRoute(async (req, res) => res.json(await importer.deleteImported(req.body?.keys))));
   // whatever arrived becomes part of the library: the destination is added as a media root if no root covers it
   importer.onFinished = async (job) => {
     if (job.items.some((it) => it.status === 'done')) await roots.include(job.dest);

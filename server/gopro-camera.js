@@ -7,8 +7,10 @@
  *   GET /gopro/camera/info                    model, serial number, firmware
  *   GET /gopro/media/list                     { media: [{ d, fs: [{ n, s, cre, mod, glrv | ls }] }] }
  *   GET /videos/DCIM/<dir>/<file>             raw card file, HTTP Range honoured (resume)
- * The LRV proxy of a clip is not in the media list but is served from the same DCIM folder under
- * its card name (GL010004.LRV); the list reports its size as `glrv`.
+ *   GET /gopro/media/delete/file?path=<dir>/<file>   delete one card file
+ * The LRV proxy and THM thumbnail of a clip are not in the media list but are served from the
+ * same DCIM folder under their card names (GL010004.LRV, GX010004.THM); the list reports the LRV
+ * size as `glrv`, the THM size is unknown until fetched.
  */
 
 import os from 'node:os';
@@ -74,18 +76,25 @@ export class GoProCamera {
 
   /**
    * Download one card file to `dest`, continuing a partial `<dest>.part` where the camera honours
-   * Range, and verifying the byte count against `expectedSize`.
+   * Range, and verifying the byte count against `expectedSize` when it is known.
    * @returns {Promise<number|null>} bytes on disk, or null when the camera has no such file
    */
-  async download(dir, name, dest, { expectedSize, onProgress = () => {}, signal }) {
+  async download(dir, name, dest, { expectedSize = null, onProgress = () => {}, signal }) {
     const part = `${dest}.part`;
     let offset = await sizeOf(part);
-    if (offset >= expectedSize) offset = 0;                              // stale or oversized leftover: start over
+    if (expectedSize != null && offset >= expectedSize) offset = 0;      // stale or oversized leftover: start over
     if (!(await this.#fetchInto(this.fileUrl(dir, name), part, offset, { onProgress, signal }))) return null;
     const size = await sizeOf(part);
-    if (size !== expectedSize) throw new Error(`${name}: got ${size} bytes, expected ${expectedSize}`);
+    if (expectedSize != null && size !== expectedSize) throw new Error(`${name}: got ${size} bytes, expected ${expectedSize}`);
     await rename(part, dest);
     return size;
+  }
+
+  /** Deletes one card file; the camera answers 200 for a file it removed and an error otherwise. */
+  async deleteFile(dir, name) {
+    const res = await fetch(`${this.baseUrl}/gopro/media/delete/file?path=${encodeURIComponent(`${dir}/${name}`)}`, { signal: AbortSignal.timeout(CONTROL_TIMEOUT_MS) });
+    await res.body?.cancel();
+    if (!res.ok) throw new Error(`${name}: camera refused the delete (HTTP ${res.status})`);
   }
 
   /** Streams the card file into `part` from `offset`; false when the camera answers 404. */

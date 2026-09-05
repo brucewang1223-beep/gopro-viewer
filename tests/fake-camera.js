@@ -1,6 +1,6 @@
 /**
- * A stand-in for the Open GoPro HTTP server of a camera on USB: media list, camera info and
- * card files with Range support, plus counters so tests can see what was requested.
+ * A stand-in for the Open GoPro HTTP server of a camera on USB: media list, camera info, card
+ * files with Range support and deletion, plus counters so tests can see what was requested.
  */
 
 import http from 'node:http';
@@ -37,6 +37,16 @@ function serveFile(req, res, body, { throttleMs, hits }) {
   return tick();
 }
 
+/** Deletes `100GOPRO/<name>` from the card (and from the media list); 404 when there is no such file. */
+function deleteFile(path, res, { files, list, hits }) {
+  const name = (path ?? '').replace(/^100GOPRO\//, '');
+  hits.push({ path: `/delete/${name}`, range: null });
+  if (!files.delete(name)) { res.writeHead(404); return res.end(); }
+  for (const group of list.media) group.fs = group.fs.filter((f) => f.n !== name);
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end('{}');
+}
+
 /** Starts the fake camera; resolves to { url, hits, close(), throttleMs }. */
 export async function startFakeCamera({ files, list }, { serial = 'C3531325563165', model = 'HERO13 Black' } = {}) {
   const state = { hits: [], throttleMs: 0 };
@@ -45,6 +55,7 @@ export async function startFakeCamera({ files, list }, { serial = 'C353132556316
     if (url.pathname === '/gopro/camera/control/wired_usb') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end('{}'); }
     if (url.pathname === '/gopro/camera/info') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ model_name: model, serial_number: serial, firmware_version: 'H24.01.02.10.00' })); }
     if (url.pathname === '/gopro/media/list') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(list)); }
+    if (url.pathname === '/gopro/media/delete/file') return deleteFile(url.searchParams.get('path'), res, { files, list, hits: state.hits });
     const m = /^\/videos\/DCIM\/100GOPRO\/([^/]+)$/.exec(url.pathname);
     const body = m && files.get(decodeURIComponent(m[1]));
     if (!body) { res.writeHead(404); return res.end(); }

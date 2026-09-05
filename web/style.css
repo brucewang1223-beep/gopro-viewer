@@ -186,8 +186,12 @@ video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .import-dest { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .import-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: 12px var(--mono); }
 .import-path.empty { color: var(--muted); font-family: var(--font); }
-.import-modes { display: flex; gap: 18px; }
-.import-modes small { color: var(--muted); }
+.import-modes { display: flex; gap: 18px; align-items: center; }
+.import-modes-label { color: var(--muted); font-size: 12px; }
+.import-prompt { display: flex; align-items: center; gap: 10px; margin: 0 16px 10px; padding: 8px 12px; border: 1px solid rgba(255,176,32,.45); border-left: 3px solid var(--warn); border-radius: 6px; background: rgba(255,176,32,.08); font-size: 12px; }
+.import-prompt span { flex: 1; }
+.btn-danger { border-color: rgba(255,92,92,.6); color: var(--bad); }
+.btn-danger:hover { border-color: var(--bad); background: rgba(255,92,92,.12); }
 .import-list { overflow-y: auto; flex: 1; min-height: 140px; padding: 6px 10px; }
 .import-row { display: grid; grid-template-columns: 22px minmax(170px, 1.3fr) 118px 74px minmax(150px, 1fr); align-items: center; gap: 10px; padding: 6px; border-radius: 6px; font-size: 12px; cursor: pointer; }
 .import-row:hover { background: var(--panel-2); }

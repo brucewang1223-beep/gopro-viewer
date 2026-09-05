@@ -7,6 +7,7 @@
   ],
   "accelHz": 25,
   "map": {
+    "provider": "osm",
     "api": "https://map.lumobility.com/api",
     "glyphs": "https://map.lumobility.com/map-styles",
     "token": "your-k2-map-token",
@@ -15,7 +16,8 @@
   },
   "import": {
     "dest": "/Users/brucewang/Movies/GoPro",
-    "mode": "all",
+    "lrv": true,
+    "thm": false,
     "camera": ""
   }
 }

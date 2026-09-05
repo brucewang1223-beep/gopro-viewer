@@ -24,7 +24,7 @@ speed" matters. Secondary use: exporting the telemetry (GPX / CSV) for offline a
 | Playback | Play MP4/MOV directly in the browser (HTTP Range streaming, no transcoding). Chapters play as one continuous timeline with automatic chapter advance. Playback rate 0.25×–4×. Frame stepping. Optional LRV proxy playback. |
 | Telemetry | Extract the `gpmd` track without reading the media payload; decode with `gopro-telemetry`; normalise into columnar arrays on a global time base; cache per chapter on disk. GPS5 (HERO5–10) and GPS9 (HERO11+) supported, GPS9 preferred. |
 | Sync | Map marker (with heading), HUD (speed, altitude, lat/lon, fix quality/DOP, UTC + local clock, |a|), chart playheads and timeline follow the video within one frame; seeking from map / charts / timeline / keyboard. |
-| Map | MapLibre GL with the K2 basemaps of `map.lumobility.com`, rendered from the same two styles that service publishes: **Map** (K2 Mapbox Streets Match — UAE vector to z14 over a world vector base to z7, road shields drawn on a canvas at style load because K2 ships no sprite) and **Satellite** (K2 Satellite Hybrid — UAE imagery to z19 over world imagery to z12, with a Labels chip that hides the label layers). The switcher sits bottom-left as two preview cards, mirroring K2's own picker; key `B` cycles it; the choice is remembered in `localStorage` and `config.json` only supplies the first-run default. Tiles and glyphs are fetched through `/api/map*` so the token stays server-side (§4.5). On selection the whole route is fitted and centred. Route drawn in two colours — travelled (accent) vs remaining (grey) — updated as playback advances; optional speed colouring (remaining part dimmed). Prominent pulsing position marker with heading. Map stays freely zoomable; "fit whole route" and "centre on position" buttons top-left (also key `F`); follow mode. Only samples the receiver actually fixed are drawn: a lost fix ends the line rather than being bridged, and the position marker is hidden while there is no fix instead of holding a stale position. |
+| Map | MapLibre GL with two basemaps in the K2 styles, from a data provider chosen in `config.json` (`map.provider`): **`osm`** (the default) draws the same styles on OpenStreetMap data — OpenFreeMap vector tiles (OpenMapTiles schema, world-wide to z14, no key or quota, fetched by the browser) for the map and the label overlay, Esri World Imagery for the satellite view (world-wide to z19) — from `web/styles/osm-*.json`, derived from the K2 styles by `scripts/make-osm-styles.js` (sources, glyphs and two layers OpenFreeMap has no data for are the only differences; road shields, colours and fonts are identical). **`k2`** keeps the original basemaps of `map.lumobility.com`, rendered from the same two styles that service publishes: **Map** (K2 Mapbox Streets Match — UAE vector to z14 over a world vector base to z7, road shields drawn on a canvas at style load because K2 ships no sprite) and **Satellite** (K2 Satellite Hybrid — UAE imagery to z19 over world imagery to z12, with a Labels chip that hides the label layers). The switcher sits bottom-left as two preview cards, mirroring K2's own picker; key `B` cycles it; the choice is remembered in `localStorage` and `config.json` only supplies the first-run default. Tiles and glyphs are fetched through `/api/map*` so the token stays server-side (§4.5). On selection the whole route is fitted and centred. Route drawn in two colours — travelled (accent) vs remaining (grey) — updated as playback advances; optional speed colouring (remaining part dimmed). Prominent pulsing position marker with heading. Map stays freely zoomable; "fit whole route" and "centre on position" buttons top-left (also key `F`); follow mode. Only samples the receiver actually fixed are drawn: a lost fix ends the line rather than being bridged, and the position marker is hidden while there is no fix instead of holding a stale position. |
 | Charts | Speed (km/h — drawn only where the GPS fix is steady, see the speed rule in §4.2; elsewhere the line breaks), altitude (m), G-force (longitudinal / lateral / vertical g), gyro rates (yaw / pitch / roll °/s); the chart set adapts to the data available; shared cursor and zoom; chapter boundaries marked. |
 | Gauges | Instrument cluster centred at the top of the video: G-force ball (friction circle, 0.5 g / 1 g rings, trail), gyro ball (yaw ↔, pitch ↕, roll-rate arc at the rim) and attitude bubble level (pitch / roll from the measured gravity direction). Toggle with `G`. |
 | Audio | Always muted by design (`<video muted>` and enforced in code); no volume UI. Muted playback also avoids browser autoplay restrictions. |
@@ -34,7 +34,7 @@ speed" matters. Secondary use: exporting the telemetry (GPX / CSV) for offline a
 | Layout stability | Every live readout (HUD cells, gauge captions, time display, chart hover readouts) is written at a constant character width in a monospace font with tabular numerals and `white-space: pre`, so nothing reflows or jitters during playback. |
 | Stats | Distance, max/avg speed and moving time (from trustworthy speed samples only — see the speed rule in §4.2), elevation gain/loss, fix-quality histogram, camera model/firmware, UTC start. |
 | Export | GPX 1.1 (fixed points only, with ele/time/speed), GeoJSON and CSV (GPS, accelerometer, gyroscope). GeoJSON is a `FeatureCollection` of `LineString` features, one per contiguous run of positioned samples (split on lost fix or a gap > 5 s), positions as `[lon, lat, alt]`, per-run stats + camera/settings in `properties`, per-point `times`/`speeds` in `properties.coordinateProperties` (the togeojson convention). CLI `scripts/dump-telemetry.js` for headless extraction. |
-| Import | Copy clips from the GoPro connected by USB (GoPro Connect / NCM mode, Open GoPro HTTP API — see §4.6) into a destination folder picked per import in the Mac's own folder panel (opened by the server with `osascript`, never typed), filed under `<destination>/<YYYY-MM-DD>/` by the camera's recording date. Two modes: **All files** (each clip's MP4 plus its LRV proxy, and any photos) or **MP4 only**; THM thumbnails are never imported. A ledger of everything ever imported (`import-ledger.json`, outside `.cache/`) decides what is ticked by default: a clip imported before — whether or not its local copy still exists — is listed unticked and labelled with when and where it went, and is only imported again when the user ticks it by hand. One job at a time, sequential downloads, HTTP Range resume of a `.part` left by a stopped or failed transfer, byte-count verification, a file already complete at the destination is verified rather than fetched, the ledger is written after every completed clip, and the destination is added as a media root (unless one already covers it) so the imported footage appears in the library. |
+| Import | Copy clips from the GoPro connected by USB (GoPro Connect / NCM mode, Open GoPro HTTP API — see §4.6) into a destination folder picked per import in the Mac's own folder panel (opened by the server with `osascript`, never typed), filed under `<destination>/<YYYY-MM-DD>/` by the camera's recording date. Every card entry is listed; with each MP4 the **LRV proxy** (ticked by default) and the **THM thumbnail** (unticked by default) come along when ticked, and the choices are remembered. When a job ends the dialog asks whether the clips it brought in completely should be **deleted from the camera** (MP4, then LRV and THM best-effort, via `/gopro/media/delete/file`); only those clips can be deleted, one time, and "Keep on camera" leaves them. A ledger of everything ever imported (`import-ledger.json`, outside `.cache/`) decides what is ticked by default: a clip imported before — whether or not its local copy still exists — is listed unticked and labelled with when and where it went, and is only imported again when the user ticks it by hand. One job at a time, sequential downloads, HTTP Range resume of a `.part` left by a stopped or failed transfer, byte-count verification, a file already complete at the destination is verified rather than fetched, the ledger is written after every completed clip, and the destination is added as a media root (unless one already covers it) so the imported footage appears in the library. |
 | Config | Media roots via UI (persisted to `config.json`), CLI flags, environment variables. Server binds 127.0.0.1 by default. |
 | Desktop use | `web/manifest.webmanifest` + icons make the page installable as a Chrome app (own window, Dock icon); `scripts/macos-launch-agent.sh` (`npm run autostart`) starts the server at login via launchd. |
 
@@ -187,30 +187,37 @@ The camera is found on the USB network: the Mac's interface is `172.2X.1YZ.52` a
 `172.2X.1YZ.51:8080` (XYZ = last three digits of its serial number); `import.camera` in `config.json`
 pins a URL instead. `GET /gopro/camera/control/wired_usb?p=1` enables wired control, `/gopro/camera/info`
 gives model / serial / firmware, `/gopro/media/list` the card contents, and `/videos/DCIM/<dir>/<file>`
-the bytes (the LRV proxy is not listed but is served under its card name; its size is `glrv`).
+the bytes (the LRV proxy and THM thumbnail are not listed but are served under their card names; the
+LRV size is `glrv`, the THM size is unknown until fetched); `/gopro/media/delete/file?path=<dir>/<file>`
+deletes one card file.
 
 ```
 GET  /api/import → { camera: { model, serial, firmware, url } | null, reason?,
                      items: [{ key, dir, name, size, cre, lrvSize, date,        // key = ledger identity, date = YYYY-MM-DD
                                imported: { at, dest, files } | null }],       // from the ledger
-                     defaults: { dest, mode }, job }                           // last destination / mode; current or last job
+                     defaults: { dest, lrv, thm }, job }                       // last destination / sidecar choices; current or last job
 POST /api/import/choose-folder { current } → { path | null }                   // macOS folder panel on the server's screen; null = cancelled; 501 elsewhere
-POST /api/import { dest, mode: "all" | "mp4", keys: [key] } → 202 job         // 400 bad input, 409 while one runs, 503 no camera
+POST /api/import { dest, keys: [key], lrv, thm } → 202 job                     // 400 bad input, 409 while one runs, 503 no camera
 GET  /api/import/job → job | null      DELETE /api/import/job → { cancelled }
-job = { id, state: running | done | failed | cancelled, dest, mode, camera, startedAt, finishedAt,
+POST /api/import/delete { keys: [key] } → job                                  // 409 no finished job, 400 for a clip that job did not bring in completely
+job = { id, state: running | done | failed | cancelled, dest, options: { lrv, thm }, camera, startedAt, finishedAt,
         totalBytes, doneBytes, rateBps,
         items: [{ key, name, date, size, total, bytes, status: pending | downloading | done | failed | cancelled, error,
+                  deleted, deleteError,
                   files: [{ name, size, status: pending | downloading | done | present | absent }] }] }
 ```
 
 `date` comes from `cre` read with UTC getters: the camera writes its local wall-clock time as if it
 were UTC (verified against the THM's EXIF time on the card), so the folder is the local recording date.
-Files per clip: `all` → the entry plus `GLccnnnn.LRV` when the list reports an LRV size; `mp4` → MP4
-entries only. The THM thumbnail is never fetched in either mode. Files are fetched in order, one
-clip at a time, oldest first; a file already at the destination with the expected size is `present`;
-a `<file>.part` is resumed with `Range: bytes=<n>-` (a 200 restarts it, a 416 discards it); a listed
-file the camera does not serve (404) is `absent` and dropped from the byte total; the clip's ledger
-entry is written only when all its files are in.
+Files per clip: the entry itself, plus `GLccnnnn.LRV` when `lrv` is on and the list reports an LRV
+size, plus `<stem>.THM` when `thm` is on (size unknown until fetched, so it joins the byte total on
+arrival and is never verified by count). Files are fetched in order, one clip at a time, oldest first;
+a file already at the destination with the expected size (any size, for a THM) is `present`; a
+`<file>.part` is resumed with `Range: bytes=<n>-` (a 200 restarts it, a 416 discards it); a file the
+camera does not serve (404) is `absent` and dropped from the byte total; the clip's ledger entry is
+written only when all its files are in. Deletion afterwards goes clip by clip: the MP4 first (a
+failure is reported on that clip and the others still go), then its LRV and THM names best-effort,
+since a camera may or may not remove them with the clip.
 
 The destination comes from the Mac's folder panel (`server/folder-picker.js`): `osascript -e 'tell me
 to activate' -e 'choose folder …'` in the server's own GUI session, opening on the last destination
@@ -239,8 +246,9 @@ ledger is an error, never treated as empty. `key = shortId('import', serial, dir
 | `GET /api/recordings/:id/export.csv?stream=gps\|accl\|gyro` | CSV download |
 | `GET /api/import` | camera on USB + card files annotated with the ledger (§4.6) |
 | `POST /api/import/choose-folder {current}` | macOS folder panel → `{ path | null }` (501 off macOS) |
-| `POST /api/import {dest, mode, keys}` | start an import job (202; 400 / 409 / 503) |
+| `POST /api/import {dest, keys, lrv, thm}` | start an import job (202; 400 / 409 / 503) |
 | `GET /api/import/job` / `DELETE /api/import/job` | progress of the current or last job / cancel it |
+| `POST /api/import/delete {keys}` | delete clips the last job brought in from the camera (400 / 409) |
 | `GET /api/map/v2/tiles/…` | K2 tiles / TileJSON, token added server-side, 7-day browser cache |
 | `GET /api/map-fonts/…` | K2 glyph ranges (no token upstream) |
 | `GET /`, `/vendor/maplibre/*`, `/vendor/uplot/*` | UI and vendored libraries |
@@ -297,12 +305,12 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 | cache dir | `--cache` | `GOPRO_VIEWER_CACHE` | `./.cache` |
 | IMU rate | `--accel-hz` | — | `25` |
 | log level | `--log-level` | `LOG_LEVEL` | `info` |
-| K2 map | — | — | `map.api`, `map.glyphs`, `map.token`, `map.basemap`, `map.labels` — `config.json` only, so the token never lands in a shell history or a process listing |
-| import | — | — | `import.dest` and `import.mode` (last choices in the dialog, written back on every start), `import.camera` (URL override, empty = discover on USB), `ledgerFile` (default `./import-ledger.json`; a custom path survives saves) — `config.json` only |
+| map | — | — | `map.provider` (`osm`, the default, or `k2`), `map.basemap`, `map.labels`; for K2 `map.api`, `map.glyphs`, `map.token` — `config.json` only, so the token never lands in a shell history or a process listing |
+| import | — | — | `import.dest`, `import.lrv`, `import.thm` (last choices in the dialog, written back on every start; LRV on and THM off out of the box), `import.camera` (URL override, empty = discover on USB), `ledgerFile` (default `./import-ledger.json`; a custom path survives saves) — `config.json` only |
 
 ## 8. Acceptance criteria (v0.1)
 
-1. `npm test` passes (60 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming, map proxy path whitelist and token signing, route geometry and gradients, import against a fake camera — date folders, modes without THM, ledger skip and manual re-import, in-place verification, Range resume, cancel, error codes, folder-panel scripting) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
+1. `npm test` passes (66 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming, map proxy path whitelist and token signing, route geometry and gradients, the OSM styles re-derived from the K2 styles, import against a fake camera — date folders, LRV/THM options, ledger skip and manual re-import, in-place verification, Range resume, cancel, delete-from-camera guards and sidecars, error codes, folder-panel scripting) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
 2. Pointing the app at a folder of GoPro files lists every recording with correct chapter grouping and duration; scanning 500 files completes in seconds (moov-only reads, cached).
 3. Selecting a recording with GPS shows the track on the map, the HUD and charts populate, and pressing play moves the marker along the track in step with the video; the marker never draws through no-fix segments.
 4. Clicking on the map track, a chart or the timeline seeks the video (across chapters) and all views stay consistent.
@@ -310,7 +318,8 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 6. GPX/CSV exports open in QGIS / pandas without cleanup; GPX contains only fixed points.
 7. A file without a GPMF track still plays; the UI states that no telemetry is available.
 8. On a forward-facing dashcam recording, hard braking moves the G-force ball to BRK, a right turn moves the gyro ball and the G-force ball to the right, and the attitude bubble stays near centre on level road (verified on HERO13 footage).
-9. With a HERO13 on USB in GoPro Connect mode, *Import from camera* lists the card within a second, opens the Mac's folder panel in front of every window for the destination, files the chosen clips under `<destination>/<YYYY-MM-DD>/` with their LRV proxies (no THM) at the USB 2.0 rate (≈43 MB/s), records them in the ledger, shows them unticked as "imported …" on the next visit, imports a ticked one again (verifying a copy that is still there instead of fetching it), resumes a stopped transfer from its `.part`, and the imported recordings appear in the library when the job ends.
+9. With a HERO13 on USB in GoPro Connect mode, *Import from camera* lists the card within a second, opens the Mac's folder panel in front of every window for the destination, files the chosen clips under `<destination>/<YYYY-MM-DD>/` with their LRV proxies (and THM thumbnails when ticked) at the USB 2.0 rate (≈43 MB/s), records them in the ledger, shows them unticked as "imported …" on the next visit, imports a ticked one again (verifying a copy that is still there instead of fetching it), resumes a stopped transfer from its `.part`, asks whether to delete what it brought in from the camera when it ends (and does, sidecars included, when told to), and the imported recordings appear in the library.
+10. With `map.provider` at its default `osm`, the Map basemap renders Abu Dhabi in the K2 look from OpenFreeMap tiles (E-road shields on the E20 included) and the Satellite basemap shows Esri imagery with the K2 label overlay that the Labels chip toggles — no token, no proxy; `k2` still renders through `/api/map` with a token.
 
 ## 9. Known limitations and risks
 

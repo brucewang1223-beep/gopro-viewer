@@ -14,8 +14,8 @@ before(async () => {
   cam = await startFakeCamera(sampleCard());
   const cfg = {
     host: '127.0.0.1', port: 0, roots: [FIXTURES], cacheDir: path.join(tmp, 'cache'), configFile: path.join(tmp, 'config.json'), accelHz: 25,
-    map: { api: 'https://map.example/api', glyphs: 'https://map.example/styles', token: '', basemap: 'streets', labels: true },
-    ledgerFile: path.join(tmp, 'import-ledger.json'), import: { dest: '', mode: 'all', camera: cam.url }, logLevel: 'warn',
+    map: { provider: 'osm', api: 'https://map.example/api', glyphs: 'https://map.example/styles', token: '', basemap: 'streets', labels: true },
+    ledgerFile: path.join(tmp, 'import-ledger.json'), import: { dest: '', lrv: true, thm: false, camera: cam.url }, logLevel: 'warn',
   };
   const app = createApp(cfg);
   server = app.listen(0, '127.0.0.1');
@@ -139,14 +139,15 @@ test('import from the camera: snapshot, job, ledger, destination becomes a media
   assert.equal(snap.body.camera.model, 'HERO13 Black');
   assert.equal(snap.body.items.length, 3);
   assert.ok(snap.body.items.every((it) => it.imported === null));
-  assert.deepEqual(snap.body.defaults, { dest: '', mode: 'all' });
+  assert.deepEqual(snap.body.defaults, { dest: '', lrv: true, thm: false });
   assert.equal((await json('/api/import/job')).body, null);
-  assert.equal((await post({ dest: 'relative', mode: 'all', keys: ['x'] })).status, 400);
-  assert.equal((await post({ dest: tmp, mode: 'all', keys: [] })).status, 400);
+  assert.equal((await post({ dest: 'relative', lrv: false, thm: false, keys: ['x'] })).status, 400);
+  assert.equal((await post({ dest: tmp, lrv: false, thm: false, keys: [] })).status, 400);
+  assert.equal((await json('/api/import/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: ['x'] }) })).status, 409, 'nothing to delete from yet');
 
   const dest = path.join(tmp, 'footage');
   const keys = snap.body.items.filter((it) => it.name.endsWith('.MP4')).map((it) => it.key);
-  const started = await post({ dest, mode: 'mp4', keys });
+  const started = await post({ dest, lrv: false, thm: false, keys });
   assert.equal(started.status, 202);
   assert.equal(started.body.state, 'running');
   assert.equal(started.body.dest, dest);
@@ -160,13 +161,21 @@ test('import from the camera: snapshot, job, ledger, destination becomes a media
   assert.ok((await json('/api/config')).body.roots.some((r) => r.path === dest), 'the destination joined the media roots');
   assert.ok(await until(async () => JSON.parse(await readFile(path.join(tmp, 'config.json'), 'utf8')).roots.includes(dest)), 'and config.json says so');
   const saved = JSON.parse(await readFile(path.join(tmp, 'config.json'), 'utf8'));
-  assert.deepEqual(saved.import, { dest, mode: 'mp4', camera: cam.url });
+  assert.deepEqual(saved.import, { dest, lrv: false, thm: false, camera: cam.url });
+  assert.equal((await json('/api/config')).body.map.provider, 'osm');
   assert.equal(saved.ledgerFile, path.join(tmp, 'import-ledger.json'), 'a custom ledger path survives a save');
   assert.equal(Object.keys(JSON.parse(await readFile(path.join(tmp, 'import-ledger.json'), 'utf8')).entries).length, 2);
 
   const again = await json('/api/import');
   assert.ok(again.body.items.filter((it) => it.name.endsWith('.MP4')).every((it) => it.imported?.dest === path.join(dest, '2026-09-05')));
   assert.equal(again.body.items.find((it) => it.name.endsWith('.JPG')).imported, null);
-  assert.deepEqual(again.body.defaults, { dest, mode: 'mp4' });
+  assert.deepEqual(again.body.defaults, { dest, lrv: false, thm: false });
   assert.deepEqual((await json('/api/import/job', { method: 'DELETE' })).body, { cancelled: false });
+
+  const refused = await json('/api/import/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: [again.body.items.find((it) => it.name.endsWith('.JPG')).key] }) });
+  assert.equal(refused.status, 400, 'the photo was not part of the import');
+  const deleted = await json('/api/import/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys }) });
+  assert.equal(deleted.status, 200);
+  assert.ok(deleted.body.items.every((it) => it.deleted === true));
+  assert.deepEqual((await json('/api/import')).body.items.map((it) => it.name), ['GOPR0001.JPG'], 'the camera no longer lists the deleted clips');
 });

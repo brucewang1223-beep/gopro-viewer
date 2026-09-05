@@ -1,12 +1,14 @@
 /**
- * K2 map (MapLibre GL): the driven route with travelled / remaining or speed colouring,
+ * Map (MapLibre GL): the driven route with travelled / remaining or speed colouring,
  * a heading marker at the current position, click-to-seek, follow mode, and the
  * Map / Satellite switcher.
  *
  * The route is handed to the renderer once as GeoJSON. Playback then only moves the
  * cut point of a `line-gradient`, so a long drive costs a paint-property update per
- * frame instead of a geometry rebuild. Tiles, glyphs and the access token are served
- * by our own /api/map proxy — see server/map.js.
+ * frame instead of a geometry rebuild. The basemaps come from a provider chosen in
+ * config.json: `osm` (OpenFreeMap vector tiles + Esri imagery, fetched by the browser)
+ * or `k2` (map.lumobility.com through our /api/map proxy — see server/map.js); both use
+ * the same K2 styles, see scripts/make-osm-styles.js.
  */
 
 import { buildRoute, fractionAlong, runGradient, ROUTE } from './map-route.js';
@@ -14,10 +16,12 @@ import { installRoadShields } from './map-shields.js';
 import { ButtonsControl, BasemapControl, ICONS } from './map-controls.js';
 import { clamp } from './util.js';
 
-const BASEMAPS = {
-  streets: { label: 'Map', style: '/styles/k2-streets.json', shields: true },
-  satellite: { label: 'Satellite', style: '/styles/k2-satellite.json', labelLayers: /-label$/ },
-};
+const PROVIDERS = ['osm', 'k2'];
+/** The two basemaps of a provider: web/styles/<provider>-<basemap>.json. */
+const basemapsFor = (provider) => ({
+  streets: { label: 'Map', style: `/styles/${provider}-streets.json`, shields: true },
+  satellite: { label: 'Satellite', style: `/styles/${provider}-satellite.json`, labelLayers: /-label$/ },
+});
 
 const SOURCE = 'route';
 const CASING_LAYER = 'route-casing';
@@ -43,13 +47,15 @@ const absolute = (url) => ({ url: url.startsWith('/') ? location.origin + url : 
 export class TrackMap {
   /**
    * @param {HTMLElement} el
-   * @param {{ basemap?: string, labels?: boolean, onSeek?: (t: number) => void,
+   * @param {{ provider?: string, basemap?: string, labels?: boolean, onSeek?: (t: number) => void,
    *   onPrefs?: (prefs: { basemap: string, labels: boolean }) => void }} opts
    */
-  constructor(el, { basemap = 'streets', labels = true, onSeek, onPrefs } = {}) {
+  constructor(el, { provider = 'osm', basemap = 'streets', labels = true, onSeek, onPrefs } = {}) {
     this.onSeek = onSeek;
     this.onPrefs = onPrefs;
-    this.basemap = BASEMAPS[basemap] ? basemap : 'streets';
+    this.provider = PROVIDERS.includes(provider) ? provider : 'osm';
+    this.basemaps = basemapsFor(this.provider);
+    this.basemap = this.basemaps[basemap] ? basemap : 'streets';
     this.labels = labels;
     this.track = null;
     this.route = null;
@@ -64,7 +70,7 @@ export class TrackMap {
 
     this.map = new maplibregl.Map({
       container: el,
-      style: BASEMAPS[this.basemap].style,
+      style: this.basemaps[this.basemap].style,
       center: HOME.center,
       zoom: HOME.zoom,
       maxZoom: 19,
@@ -97,7 +103,7 @@ export class TrackMap {
     this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     this.map.addControl(new maplibregl.ScaleControl({ maxWidth: 90, unit: 'metric' }), 'bottom-right');
     this.basemapControl = new BasemapControl({
-      basemaps: BASEMAPS,
+      basemaps: this.basemaps,
       active: this.basemap,
       labels: this.labels,
       onSelect: (key) => this.setBasemap(key),
@@ -129,7 +135,7 @@ export class TrackMap {
   /** Runs after every style load, including a basemap switch, which wipes our layers. */
   #onStyleLoad() {
     this.styleReady = true;
-    if (BASEMAPS[this.basemap].shields) installRoadShields(this.map);
+    if (this.basemaps[this.basemap].shields) installRoadShields(this.map);
     this.#applyLabels();
     this.#addRouteLayers();
     this.#paintProgress(true);
@@ -259,17 +265,23 @@ export class TrackMap {
 
   /** `user: false` applies a default from config.json without recording a preference. */
   setBasemap(key, { user = true } = {}) {
-    if (!BASEMAPS[key] || key === this.basemap) return;
+    if (!this.basemaps[key] || key === this.basemap) return;
     this.basemap = key;
-    this.styleReady = false;
-    this.#routeEvents(false);              // setStyle drops the layer these are bound to
-    this.map.setStyle(BASEMAPS[key].style);
+    this.#loadStyle();
     this.basemapControl.setState({ active: key });
     if (user) this.#prefsChanged();
   }
 
+  /** Same two basemaps from another data provider (config.json `map.provider`). */
+  setProvider(provider) {
+    if (!PROVIDERS.includes(provider) || provider === this.provider) return;
+    this.provider = provider;
+    this.basemaps = basemapsFor(provider);
+    this.#loadStyle();
+  }
+
   toggleBasemap() {
-    const keys = Object.keys(BASEMAPS);
+    const keys = Object.keys(this.basemaps);
     this.setBasemap(keys[(keys.indexOf(this.basemap) + 1) % keys.length]);
   }
 
@@ -296,9 +308,15 @@ export class TrackMap {
 
   /* ---------- internals ---------- */
 
+  #loadStyle() {
+    this.styleReady = false;
+    this.#routeEvents(false);              // setStyle drops the layer these are bound to
+    this.map.setStyle(this.basemaps[this.basemap].style);
+  }
+
   /** Imagery basemaps carry their labels in one style; the chip hides them. */
   #applyLabels() {
-    const pattern = BASEMAPS[this.basemap].labelLayers;
+    const pattern = this.basemaps[this.basemap].labelLayers;
     if (!pattern || !this.styleReady) return;
     const visibility = this.labels ? 'visible' : 'none';
     for (const { id } of this.map.getStyle().layers) {

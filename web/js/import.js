@@ -1,9 +1,11 @@
 /**
  * Import dialog: copy clips from the GoPro on USB into <destination>/<YYYY-MM-DD>/, the destination
- * picked in the Mac's own folder panel (served by the local server, never typed).
+ * picked in the Mac's own folder panel (served by the local server, never typed), each clip with
+ * its LRV proxy (ticked by default) and THM thumbnail (unticked by default) as chosen.
  * Clips the ledger already knows are listed unticked ("imported …"); ticking one imports it again.
  * A running job is polled once a second — also after the dialog is closed — so the status bar
- * and the library follow it.
+ * and the library follow it; when it ends the dialog comes back to ask whether the clips it
+ * brought in should be deleted from the camera.
  */
 
 import { api } from './api.js';
@@ -14,10 +16,9 @@ const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const isMp4 = (name) => /\.mp4$/i.test(name);
-const eligible = (item, mode) => mode === 'all' || isMp4(item.name);
-const hasSidecars = (item, mode) => mode === 'all' && isMp4(item.name);
-const itemBytes = (item, mode) => item.size + (hasSidecars(item, mode) ? item.lrvSize : 0);
+const itemBytes = (item, { lrv }) => item.size + (lrv && isMp4(item.name) ? item.lrvSize : 0);
 const sum = (items, f) => items.reduce((n, it) => n + f(it), 0);
+const clips = (n) => `${n} clip${n === 1 ? '' : 's'}`;
 /** Camera clock (local time stored as UTC) → "2026-09-05 08:48". */
 const fmtRecorded = (creEpochSec) => new Date(creEpochSec * 1000).toISOString().replace('T', ' ').slice(0, 16);
 const shortDir = (p) => { const parts = p.split('/').filter(Boolean); return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : p; };
@@ -26,6 +27,8 @@ const NO_CAMERA_HINT = 'Connect the GoPro by USB with its USB connection set to 
 
 /** Status cell of a clip that is part of a job. */
 function jobStatus(it) {
+  if (it.deleted) return { text: 'imported · deleted from camera ✓', cls: 'ok' };
+  if (it.deleteError) return { text: `imported · delete failed: ${it.deleteError}`, cls: 'bad', title: it.deleteError };
   if (it.status === 'downloading') return { text: `${fmtBytes(it.bytes)} / ${fmtBytes(it.total)}`, cls: 'busy', frac: it.total ? it.bytes / it.total : 0 };
   if (it.status === 'done') return it.files.every((f) => f.status === 'present' || f.status === 'absent') ? { text: 'already on disk ✓', cls: 'ok' } : { text: 'done ✓', cls: 'ok' };
   if (it.status === 'failed') return { text: `failed: ${it.error}`, cls: 'bad', title: it.error };
@@ -40,6 +43,9 @@ function cardStatus(it) {
   return { text: `imported ${when.slice(0, 10)} → ${shortDir(it.imported.dest)}`, cls: 'muted', title: `Imported ${when} into ${it.imported.dest}\nTick to import it again.` };
 }
 
+/** Clips a finished job brought in completely and has not deleted from the camera yet. */
+const deletable = (job) => job.items.filter((it) => it.status === 'done' && !it.deleted && !it.deleteError);
+
 /** One line for the footer / status bar: "Importing 2/5 · 34% · 43.1 MB/s · 7:24 left". */
 export function jobSummary(job) {
   const n = job.items.length;
@@ -51,9 +57,11 @@ export function jobSummary(job) {
   }
   const done = job.items.filter((it) => it.status === 'done').length;
   const failed = job.items.filter((it) => it.status === 'failed').length;
+  const deleted = job.items.filter((it) => it.deleted).length;
   const took = fmtTime((new Date(job.finishedAt) - new Date(job.startedAt)) / 1000, 0);
   const head = job.state === 'cancelled' ? 'Import stopped' : 'Import finished';
-  return `${head}: ${done} of ${n} clip${n > 1 ? 's' : ''} (${fmtBytes(job.doneBytes)}) in ${took}${failed ? ` · ${failed} failed` : ''} → ${job.dest}`;
+  const tail = `${failed ? ` · ${failed} failed` : ''}${deleted ? ` · ${deleted} deleted from the camera` : ''}`;
+  return `${head}: ${done} of ${clips(n)} (${fmtBytes(job.doneBytes)}) in ${took}${tail} → ${job.dest}`;
 }
 
 export class ImportDialog {
@@ -69,15 +77,19 @@ export class ImportDialog {
     this.selected = new Set();
     this.dest = '';         // destination folder, chosen in the native panel
     this.polling = false;
+    this.asked = false;     // the delete-from-camera question was answered (or dismissed) for this job
     $('import-close').addEventListener('click', () => dialog.close());
     $('import-retry').addEventListener('click', () => this.#refresh());
     $('import-choose').addEventListener('click', () => this.#chooseFolder());
     $('import-start').addEventListener('click', () => this.#start());
     $('import-stop').addEventListener('click', () => api.cancelImport().catch((e) => this.h.toast(e.message, 'error')));
-    for (const r of dialog.querySelectorAll('input[name="import-mode"]')) r.addEventListener('change', () => this.#render());
+    $('import-delete').addEventListener('click', () => this.#deleteFromCamera());
+    $('import-keep').addEventListener('click', () => { this.asked = true; this.#renderFooter(); });
+    for (const box of dialog.querySelectorAll('.import-options input')) box.addEventListener('change', () => this.#render());
   }
 
-  get mode() { return this.dialog.querySelector('input[name="import-mode"]:checked').value; }
+  /** Sidecar choices as ticked in the dialog. */
+  get options() { return { lrv: $('import-lrv').checked, thm: $('import-thm').checked }; }
   get busy() { return this.job?.state === 'running'; }
   /** Inputs are frozen while a job runs and while its result is on screen — "Look again" starts afresh. */
   get locked() { return !!this.job; }
@@ -112,14 +124,14 @@ export class ImportDialog {
 
   #showJob() {
     this.dest = this.job.dest;
-    this.#applyDefaults({ mode: this.job.mode });
+    this.#applyDefaults(this.job.options);
     this.#render();
   }
 
-  #applyDefaults({ dest, mode }) {
+  #applyDefaults({ dest, lrv, thm }) {
     if (dest && !this.dest) this.dest = dest;
-    const radio = this.dialog.querySelector(`input[name="import-mode"][value="${mode}"]`);
-    if (radio) radio.checked = true;
+    if (typeof lrv === 'boolean') $('import-lrv').checked = lrv;
+    if (typeof thm === 'boolean') $('import-thm').checked = thm;
   }
 
   /** The native folder panel opens on the Mac's screen; the server answers when it is closed. */
@@ -138,15 +150,15 @@ export class ImportDialog {
 
   /* ---------- rendering ---------- */
 
-  /** Rows to show: the card (filtered by mode) when we have it, else the job's own clips, else nothing. */
+  /** Rows to show: the card when we have it, else the job's own clips, else nothing. */
   #items() {
-    if (this.snap?.camera) return this.snap.items.filter((it) => eligible(it, this.mode));
+    if (this.snap?.camera) return this.snap.items;
     return this.job ? this.job.items : null;
   }
 
   #cameraLabel() {
     const snap = this.snap;
-    if (snap?.camera) return `${snap.camera.model} · ${snap.items.length} file(s) on the card · ${fmtBytes(sum(snap.items, (it) => itemBytes(it, 'all')))}`;
+    if (snap?.camera) return `${snap.camera.model} · ${snap.items.length} file(s) on the card · ${fmtBytes(sum(snap.items, (it) => itemBytes(it, { lrv: true })))}`;
     if (this.job) return `${this.job.camera} · ${this.busy ? 'importing…' : 'import finished'}`;
     return snap ? 'No camera' : 'Looking for a camera on USB…';
   }
@@ -164,7 +176,7 @@ export class ImportDialog {
     const label = $('import-camera');
     label.textContent = this.#cameraLabel();
     label.classList.toggle('busy', !this.snap || this.busy);
-    for (const box of this.dialog.querySelectorAll('#import-choose, input[name="import-mode"]')) box.disabled = this.locked;
+    for (const box of this.dialog.querySelectorAll('#import-choose, .import-options input')) box.disabled = this.locked;
     this.#renderFooter();
   }
 
@@ -185,7 +197,8 @@ export class ImportDialog {
     const box = el('input', { type: 'checkbox', onchange: () => { if (box.checked) this.selected.add(it.key); else this.selected.delete(it.key); this.#render(); } }); // re-render: the header box mirrors the selection
     box.checked = this.selected.has(it.key);
     box.disabled = this.locked;
-    const chips = hasSidecars(it, this.mode) && it.lrvSize > 0 ? [chip('LRV')] : [];
+    const { lrv, thm } = this.options;
+    const chips = isMp4(it.name) ? [lrv && it.lrvSize > 0 ? chip('LRV') : null, thm ? chip('THM') : null] : [];
     const status = jobItem ? jobStatus(jobItem) : cardStatus(it);
     const cell = el('span', { class: `import-status ${status.cls}` }, [el('span', { text: status.text, title: status.title ?? null })]);
     if (status.frac != null) cell.append(el('div', { class: 'bar' }, el('div', { style: `width:${Math.round(100 * status.frac)}%` })));
@@ -193,7 +206,7 @@ export class ImportDialog {
       box,
       el('span', { class: 'import-name' }, [el('b', { text: it.name }), ...chips]),
       el('span', { class: 'import-when', text: fmtRecorded(it.cre) }),
-      el('span', { class: 'import-size', text: fmtBytes(itemBytes(it, this.mode)) }),
+      el('span', { class: 'import-size', text: fmtBytes(itemBytes(it, { lrv })) }),
       cell,
     ]);
   }
@@ -209,13 +222,24 @@ export class ImportDialog {
     $('import-retry').disabled = this.busy;
     const start = $('import-start');
     start.classList.toggle('hidden', this.locked);
+    this.#renderPrompt();
     if (job) { $('import-summary').textContent = jobSummary(job); return; }
     const shown = this.#items() ?? [];
     const picked = shown.filter((it) => this.selected.has(it.key));
-    const bytes = sum(picked, (it) => itemBytes(it, this.mode));
+    const bytes = sum(picked, (it) => itemBytes(it, this.options));
     start.disabled = !picked.length || !this.dest;
-    start.textContent = picked.length ? `Import ${picked.length} clip${picked.length > 1 ? 's' : ''} (${fmtBytes(bytes)})` : 'Import';
+    start.textContent = picked.length ? `Import ${clips(picked.length)} (${fmtBytes(bytes)})` : 'Import';
     $('import-summary').textContent = this.snap?.camera ? `${picked.length} of ${shown.length} selected — new clips are ticked, imported ones are not` : '';
+  }
+
+  /** The question that follows a finished import: delete what it brought in from the camera? */
+  #renderPrompt() {
+    const job = this.job;
+    const pending = job && !job.running && !this.asked ? deletable(job) : [];
+    $('import-prompt').classList.toggle('hidden', !pending.length);
+    if (!pending.length) return;
+    $('import-prompt-text').textContent = `${clips(pending.length)} (${fmtBytes(sum(pending, (it) => it.total))}) ${pending.length === 1 ? 'is' : 'are'} now safely on disk. Delete ${pending.length === 1 ? 'it' : 'them'} from the camera to free the card?`;
+    $('import-delete').textContent = `Delete ${clips(pending.length)} from camera`;
   }
 
   /* ---------- job ---------- */
@@ -223,7 +247,8 @@ export class ImportDialog {
   async #start() {
     const keys = (this.#items() ?? []).filter((it) => this.selected.has(it.key)).map((it) => it.key);
     try {
-      this.job = await api.startImport({ dest: this.dest, mode: this.mode, keys });
+      this.job = await api.startImport({ dest: this.dest, keys, ...this.options });
+      this.asked = false;
       this.dest = this.job.dest;
       this.#render();
       this.#poll();
@@ -242,11 +267,34 @@ export class ImportDialog {
         if (this.dialog.open) this.#render();
         this.h.onProgress(this.job);
       }
-      if (this.job) this.h.onFinished(this.job);
+      if (this.job) this.#finish(this.job);
     } catch (e) {
       this.h.toast(`Lost track of the import: ${e.message}`, 'error', 8000);
     } finally {
       this.polling = false;
+    }
+  }
+
+  /** A finished job with something to delete brings the dialog back so the question is seen. */
+  #finish(job) {
+    this.h.onFinished(job);
+    if (!this.dialog.open && deletable(job).length) { this.dialog.showModal(); this.#showJob(); }
+  }
+
+  async #deleteFromCamera() {
+    const keys = deletable(this.job).map((it) => it.key);
+    const button = $('import-delete');
+    button.disabled = true;
+    try {
+      this.job = await api.deleteImported(keys);
+      this.asked = true;
+      const failed = this.job.items.filter((it) => it.deleteError).length;
+      this.h.toast(failed ? `${failed} of ${clips(keys.length)} could not be deleted from the camera` : `Deleted ${clips(keys.length)} from the camera`, failed ? 'warn' : 'info', 7000);
+    } catch (e) {
+      this.h.toast(`Delete failed: ${e.message}`, 'error', 8000);
+    } finally {
+      button.disabled = false;
+      this.#render();
     }
   }
 }
