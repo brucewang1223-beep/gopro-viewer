@@ -1,5 +1,6 @@
 /**
- * Import dialog: copy clips from the GoPro on USB into <destination>/<YYYY-MM-DD>/.
+ * Import dialog: copy clips from the GoPro on USB into <destination>/<YYYY-MM-DD>/, the destination
+ * picked in the Mac's own folder panel (served by the local server, never typed).
  * Clips the ledger already knows are listed unticked ("imported …"); ticking one imports it again.
  * A running job is polled once a second — also after the dialog is closed — so the status bar
  * and the library follow it.
@@ -66,13 +67,14 @@ export class ImportDialog {
     this.snap = null;       // last GET /api/import
     this.job = null;        // job being watched (running) or whose result the list shows
     this.selected = new Set();
+    this.dest = '';         // destination folder, chosen in the native panel
     this.polling = false;
     $('import-close').addEventListener('click', () => dialog.close());
     $('import-retry').addEventListener('click', () => this.#refresh());
+    $('import-choose').addEventListener('click', () => this.#chooseFolder());
     $('import-start').addEventListener('click', () => this.#start());
     $('import-stop').addEventListener('click', () => api.cancelImport().catch((e) => this.h.toast(e.message, 'error')));
     for (const r of dialog.querySelectorAll('input[name="import-mode"]')) r.addEventListener('change', () => this.#render());
-    $('import-dest').addEventListener('input', () => this.#renderFooter());
   }
 
   get mode() { return this.dialog.querySelector('input[name="import-mode"]:checked').value; }
@@ -109,16 +111,29 @@ export class ImportDialog {
   }
 
   #showJob() {
-    $('import-dest').value = this.job.dest;
+    this.dest = this.job.dest;
     this.#applyDefaults({ mode: this.job.mode });
     this.#render();
   }
 
   #applyDefaults({ dest, mode }) {
-    const input = $('import-dest');
-    if (dest && !input.value) input.value = dest;
+    if (dest && !this.dest) this.dest = dest;
     const radio = this.dialog.querySelector(`input[name="import-mode"][value="${mode}"]`);
     if (radio) radio.checked = true;
+  }
+
+  /** The native folder panel opens on the Mac's screen; the server answers when it is closed. */
+  async #chooseFolder() {
+    const button = $('import-choose');
+    button.disabled = true;
+    try {
+      const { path } = await api.chooseImportFolder(this.dest);
+      if (path) { this.dest = path; this.#renderFooter(); }
+    } catch (e) {
+      this.h.toast(`Could not open the folder panel: ${e.message}`, 'error', 8000);
+    } finally {
+      button.disabled = this.locked;
+    }
   }
 
   /* ---------- rendering ---------- */
@@ -149,7 +164,7 @@ export class ImportDialog {
     const label = $('import-camera');
     label.textContent = this.#cameraLabel();
     label.classList.toggle('busy', !this.snap || this.busy);
-    for (const box of this.dialog.querySelectorAll('#import-dest, input[name="import-mode"]')) box.disabled = this.locked;
+    for (const box of this.dialog.querySelectorAll('#import-choose, input[name="import-mode"]')) box.disabled = this.locked;
     this.#renderFooter();
   }
 
@@ -170,7 +185,7 @@ export class ImportDialog {
     const box = el('input', { type: 'checkbox', onchange: () => { if (box.checked) this.selected.add(it.key); else this.selected.delete(it.key); this.#render(); } }); // re-render: the header box mirrors the selection
     box.checked = this.selected.has(it.key);
     box.disabled = this.locked;
-    const chips = hasSidecars(it, this.mode) ? [it.lrvSize > 0 ? chip('LRV') : null, chip('THM')] : [];
+    const chips = hasSidecars(it, this.mode) && it.lrvSize > 0 ? [chip('LRV')] : [];
     const status = jobItem ? jobStatus(jobItem) : cardStatus(it);
     const cell = el('span', { class: `import-status ${status.cls}` }, [el('span', { text: status.text, title: status.title ?? null })]);
     if (status.frac != null) cell.append(el('div', { class: 'bar' }, el('div', { style: `width:${Math.round(100 * status.frac)}%` })));
@@ -185,6 +200,9 @@ export class ImportDialog {
 
   #renderFooter() {
     const job = this.job;
+    const dest = $('import-dest');
+    dest.textContent = this.dest || 'No folder chosen yet';
+    dest.classList.toggle('empty', !this.dest);
     $('import-progress').classList.toggle('hidden', !job);
     if (job) $('import-bar').style.width = `${job.totalBytes ? Math.min(100, 100 * job.doneBytes / job.totalBytes) : 0}%`;
     $('import-stop').classList.toggle('hidden', !this.busy);
@@ -195,7 +213,7 @@ export class ImportDialog {
     const shown = this.#items() ?? [];
     const picked = shown.filter((it) => this.selected.has(it.key));
     const bytes = sum(picked, (it) => itemBytes(it, this.mode));
-    start.disabled = !picked.length || !$('import-dest').value.trim();
+    start.disabled = !picked.length || !this.dest;
     start.textContent = picked.length ? `Import ${picked.length} clip${picked.length > 1 ? 's' : ''} (${fmtBytes(bytes)})` : 'Import';
     $('import-summary').textContent = this.snap?.camera ? `${picked.length} of ${shown.length} selected — new clips are ticked, imported ones are not` : '';
   }
@@ -205,8 +223,8 @@ export class ImportDialog {
   async #start() {
     const keys = (this.#items() ?? []).filter((it) => this.selected.has(it.key)).map((it) => it.key);
     try {
-      this.job = await api.startImport({ dest: $('import-dest').value.trim(), mode: this.mode, keys });
-      $('import-dest').value = this.job.dest;
+      this.job = await api.startImport({ dest: this.dest, mode: this.mode, keys });
+      this.dest = this.job.dest;
       this.#render();
       this.#poll();
     } catch (e) {

@@ -3,7 +3,7 @@
  * and one job at a time that copies the chosen files into `<dest>/<YYYY-MM-DD>/`, recording
  * each clip in the ledger the moment it is complete.
  *
- * Modes: 'all' — every card file plus the LRV proxy and THM thumbnail of each clip;
+ * Modes: 'all' — every card file plus the LRV proxy of each clip (never the THM thumbnail);
  *        'mp4' — MP4 files only, no sidecars.
  * Selection is the UI's: by default it ticks what the ledger does not know, so a clip imported
  * before (deleted locally or not) only comes back when the user ticks it by hand.
@@ -29,18 +29,17 @@ export function dateFolder(creEpochSec) {
   return new Date(creEpochSec * 1000).toISOString().slice(0, 10);
 }
 
-/** Card names of a clip's sidecars: GX010004.MP4 → GL010004.LRV + GX010004.THM; GOPR0001.MP4 → GOPR0001.LRV + .THM. */
-function sidecars(item) {
-  const base = item.name.replace(/\.[^.]+$/, '');
-  const lrv = /^G[XH]/i.test(base) ? `GL${base.slice(2)}.LRV` : `${base}.LRV`;
-  const files = item.lrvSize > 0 ? [{ name: lrv, size: item.lrvSize, kind: 'proxy' }] : [];
-  return [...files, { name: `${base}.THM`, size: null, kind: 'thumb' }]; // THM size is unknown until fetched
+/** Card name of a clip's LRV proxy: GX010004.MP4 → GL010004.LRV, GOPR0001.MP4 → GOPR0001.LRV. */
+function proxyName(name) {
+  const base = name.replace(/\.[^.]+$/, '');
+  return /^G[XH]/i.test(base) ? `GL${base.slice(2)}.LRV` : `${base}.LRV`;
 }
 
-/** Files to fetch for one card entry in the given mode, the entry itself first. */
+/** Files to fetch for one card entry in the given mode, the entry itself first; the THM thumbnail is never fetched. */
 export function filesFor(item, mode) {
   const main = { name: item.name, size: item.size, kind: 'main' };
-  return mode === 'all' && isMp4(item.name) ? [main, ...sidecars(item)] : [main];
+  const proxy = mode === 'all' && isMp4(item.name) && item.lrvSize > 0;
+  return proxy ? [main, { name: proxyName(item.name), size: item.lrvSize, kind: 'proxy' }] : [main];
 }
 
 /** Card entries eligible in the given mode, oldest first. */
@@ -48,8 +47,8 @@ export function eligible(items, mode) {
   return items.filter((it) => mode === 'all' || isMp4(it.name)).sort((a, b) => a.cre - b.cre || a.name.localeCompare(b.name));
 }
 
-/** Bytes still to fetch for a job: known sizes only (thumbnails are counted when they arrive). */
-const knownBytes = (items) => items.reduce((n, it) => n + it.files.reduce((m, f) => m + (f.size ?? 0), 0), 0);
+/** Bytes of every file of the given clips. */
+const bytesOf = (items) => items.reduce((n, it) => n + it.files.reduce((m, f) => m + f.size, 0), 0);
 
 class ImportJob {
   constructor({ dest, mode, items, camera, info }) {
@@ -60,7 +59,7 @@ class ImportJob {
     this.camera = camera;
     this.info = info;
     this.items = items.map((it) => ({ ...it, status: 'pending', bytes: 0, error: null, files: filesFor(it, mode).map((f) => ({ ...f, status: 'pending' })) }));
-    this.totalBytes = knownBytes(this.items);
+    this.totalBytes = bytesOf(this.items);
     this.doneBytes = 0;
     this.startedAt = new Date().toISOString();
     this.finishedAt = null;
@@ -109,18 +108,16 @@ class ImportJob {
   /** One card file into `folder`: verified as present, downloaded (resuming a `.part`), or absent on the camera. */
   async #fetchFile(item, file, folder) {
     const dest = path.join(folder, file.name);
-    const onDisk = await sizeOf(dest);
-    if (onDisk > 0 && (file.size == null || onDisk === file.size)) {
+    if (await sizeOf(dest) === file.size) {
       file.status = 'present';
-      this.#advance(item, file.size ?? 0);
+      this.#advance(item, file.size);
       return;
     }
     file.status = 'downloading';
     let last = 0;
     const onProgress = (n) => { this.#advance(item, n - last); last = n; };
     const got = await this.camera.download(item.dir, file.name, dest, { expectedSize: file.size, onProgress, signal: this.abort.signal });
-    if (got == null) { file.status = 'absent'; return; }
-    if (file.size == null) this.totalBytes += got;
+    if (got == null) { file.status = 'absent'; this.totalBytes -= file.size; return; } // listed by the camera, yet not served
     file.status = 'done';
   }
 
@@ -142,7 +139,7 @@ class ImportJob {
 
   toJSON() {
     const { id, state, dest, mode, startedAt, finishedAt, totalBytes, doneBytes, rateBps } = this;
-    const items = this.items.map((it) => ({ ...it, total: knownBytes([it]), files: it.files.map(({ name, size, status }) => ({ name, size, status })) }));
+    const items = this.items.map((it) => ({ ...it, total: bytesOf([it]), files: it.files.map(({ name, size, status }) => ({ name, size, status })) }));
     return { id, state, dest, mode, camera: this.info.model, startedAt, finishedAt, totalBytes, doneBytes, rateBps, items };
   }
 }

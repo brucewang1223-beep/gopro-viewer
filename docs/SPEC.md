@@ -34,7 +34,7 @@ speed" matters. Secondary use: exporting the telemetry (GPX / CSV) for offline a
 | Layout stability | Every live readout (HUD cells, gauge captions, time display, chart hover readouts) is written at a constant character width in a monospace font with tabular numerals and `white-space: pre`, so nothing reflows or jitters during playback. |
 | Stats | Distance, max/avg speed and moving time (from trustworthy speed samples only — see the speed rule in §4.2), elevation gain/loss, fix-quality histogram, camera model/firmware, UTC start. |
 | Export | GPX 1.1 (fixed points only, with ele/time/speed), GeoJSON and CSV (GPS, accelerometer, gyroscope). GeoJSON is a `FeatureCollection` of `LineString` features, one per contiguous run of positioned samples (split on lost fix or a gap > 5 s), positions as `[lon, lat, alt]`, per-run stats + camera/settings in `properties`, per-point `times`/`speeds` in `properties.coordinateProperties` (the togeojson convention). CLI `scripts/dump-telemetry.js` for headless extraction. |
-| Import | Copy clips from the GoPro connected by USB (GoPro Connect / NCM mode, Open GoPro HTTP API — see §4.6) into a destination folder chosen per import, filed under `<destination>/<YYYY-MM-DD>/` by the camera's recording date. Two modes: **All files** (each clip's MP4 plus its LRV proxy and THM thumbnail, and any photos) or **MP4 only**. A ledger of everything ever imported (`import-ledger.json`, outside `.cache/`) decides what is ticked by default: a clip imported before — whether or not its local copy still exists — is listed unticked and labelled with when and where it went, and is only imported again when the user ticks it by hand. One job at a time, sequential downloads, HTTP Range resume of a `.part` left by a stopped or failed transfer, byte-count verification, a file already complete at the destination is verified rather than fetched, the ledger is written after every completed clip, and the destination is added as a media root (unless one already covers it) so the imported footage appears in the library. |
+| Import | Copy clips from the GoPro connected by USB (GoPro Connect / NCM mode, Open GoPro HTTP API — see §4.6) into a destination folder picked per import in the Mac's own folder panel (opened by the server with `osascript`, never typed), filed under `<destination>/<YYYY-MM-DD>/` by the camera's recording date. Two modes: **All files** (each clip's MP4 plus its LRV proxy, and any photos) or **MP4 only**; THM thumbnails are never imported. A ledger of everything ever imported (`import-ledger.json`, outside `.cache/`) decides what is ticked by default: a clip imported before — whether or not its local copy still exists — is listed unticked and labelled with when and where it went, and is only imported again when the user ticks it by hand. One job at a time, sequential downloads, HTTP Range resume of a `.part` left by a stopped or failed transfer, byte-count verification, a file already complete at the destination is verified rather than fetched, the ledger is written after every completed clip, and the destination is added as a media root (unless one already covers it) so the imported footage appears in the library. |
 | Config | Media roots via UI (persisted to `config.json`), CLI flags, environment variables. Server binds 127.0.0.1 by default. |
 | Desktop use | `web/manifest.webmanifest` + icons make the page installable as a Chrome app (own window, Dock icon); `scripts/macos-launch-agent.sh` (`npm run autostart`) starts the server at login via launchd. |
 
@@ -61,7 +61,8 @@ highlight tags (HLMT), sensor streams other than GPS/ACCL/GYRO (available in
 │ gpmf-probe.js (fix probe)  decode.js (gopro-telemetry wrapper)  │
 │ telemetry.js (pipeline, cache)  export.js (GPX/GeoJSON/CSV)     │
 │ importer.js (plan + job)  gopro-camera.js (Open GoPro client)   │
-│ import-ledger.js  geo.js (haversine, runs)  config.js           │
+│ import-ledger.js  folder-picker.js (macOS panel)  geo.js         │
+│ config.js                                                        │
 │ json-cache.js  ids.js  log.js  index.js (entry)                 │
 └──────────────┬──────────────────────────────┬───────────┬──────┘
                │ fs reads (moov + gpmd samples)│ .cache/   │ HTTP over USB (172.2X.1YZ.51:8080)
@@ -186,13 +187,14 @@ The camera is found on the USB network: the Mac's interface is `172.2X.1YZ.52` a
 `172.2X.1YZ.51:8080` (XYZ = last three digits of its serial number); `import.camera` in `config.json`
 pins a URL instead. `GET /gopro/camera/control/wired_usb?p=1` enables wired control, `/gopro/camera/info`
 gives model / serial / firmware, `/gopro/media/list` the card contents, and `/videos/DCIM/<dir>/<file>`
-the bytes (LRV and THM sidecars are not listed but are served under their card names).
+the bytes (the LRV proxy is not listed but is served under its card name; its size is `glrv`).
 
 ```
 GET  /api/import → { camera: { model, serial, firmware, url } | null, reason?,
                      items: [{ key, dir, name, size, cre, lrvSize, date,        // key = ledger identity, date = YYYY-MM-DD
                                imported: { at, dest, files } | null }],       // from the ledger
                      defaults: { dest, mode }, job }                           // last destination / mode; current or last job
+POST /api/import/choose-folder { current } → { path | null }                   // macOS folder panel on the server's screen; null = cancelled; 501 elsewhere
 POST /api/import { dest, mode: "all" | "mp4", keys: [key] } → 202 job         // 400 bad input, 409 while one runs, 503 no camera
 GET  /api/import/job → job | null      DELETE /api/import/job → { cancelled }
 job = { id, state: running | done | failed | cancelled, dest, mode, camera, startedAt, finishedAt,
@@ -202,12 +204,19 @@ job = { id, state: running | done | failed | cancelled, dest, mode, camera, star
 ```
 
 `date` comes from `cre` read with UTC getters: the camera writes its local wall-clock time as if it
-were UTC (verified against the THM's EXIF time), so the folder is the local recording date.
-Files per clip: `all` → the entry plus `GLccnnnn.LRV` (when the list reports an LRV size) and
-`G?ccnnnn.THM` (size unknown until fetched; a 404 is tolerated); `mp4` → MP4 entries only. Files are
-fetched in order, one clip at a time, oldest first; a file already at the destination with the
-expected size is `present`; a `<file>.part` is resumed with `Range: bytes=<n>-` (a 200 restarts it,
-a 416 discards it); the clip's ledger entry is written only when all its files are in.
+were UTC (verified against the THM's EXIF time on the card), so the folder is the local recording date.
+Files per clip: `all` → the entry plus `GLccnnnn.LRV` when the list reports an LRV size; `mp4` → MP4
+entries only. The THM thumbnail is never fetched in either mode. Files are fetched in order, one
+clip at a time, oldest first; a file already at the destination with the expected size is `present`;
+a `<file>.part` is resumed with `Range: bytes=<n>-` (a 200 restarts it, a 416 discards it); a listed
+file the camera does not serve (404) is `absent` and dropped from the byte total; the clip's ledger
+entry is written only when all its files are in.
+
+The destination comes from the Mac's folder panel (`server/folder-picker.js`): `osascript -e 'tell me
+to activate' -e 'choose folder …'` in the server's own GUI session, opening on the last destination
+(or the home folder), returning the POSIX path; Cancel (AppleScript error −128) answers `null`; a
+second request while the panel is open shares its answer. The server never accepts a typed path
+from the dialog — `POST /api/import` still validates that `dest` is absolute.
 
 Ledger (`import-ledger.json`, `config.ledgerFile`): `{ v: 1, entries: { <key>: { camera, serial, dir,
 name, size, cre, importedAt, dest, files } } }`, written atomically after every clip; a corrupt
@@ -229,6 +238,7 @@ ledger is an error, never treated as empty. `key = shortId('import', serial, dir
 | `GET /api/recordings/:id/export.gpx` | GPX download |
 | `GET /api/recordings/:id/export.csv?stream=gps\|accl\|gyro` | CSV download |
 | `GET /api/import` | camera on USB + card files annotated with the ledger (§4.6) |
+| `POST /api/import/choose-folder {current}` | macOS folder panel → `{ path | null }` (501 off macOS) |
 | `POST /api/import {dest, mode, keys}` | start an import job (202; 400 / 409 / 503) |
 | `GET /api/import/job` / `DELETE /api/import/job` | progress of the current or last job / cancel it |
 | `GET /api/map/v2/tiles/…` | K2 tiles / TileJSON, token added server-side, 7-day browser cache |
@@ -292,7 +302,7 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 
 ## 8. Acceptance criteria (v0.1)
 
-1. `npm test` passes (59 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming, map proxy path whitelist and token signing, route geometry and gradients, import against a fake camera — date folders, modes, ledger skip and manual re-import, in-place verification, Range resume, cancel, error codes) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
+1. `npm test` passes (60 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming, map proxy path whitelist and token signing, route geometry and gradients, import against a fake camera — date folders, modes without THM, ledger skip and manual re-import, in-place verification, Range resume, cancel, error codes, folder-panel scripting) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
 2. Pointing the app at a folder of GoPro files lists every recording with correct chapter grouping and duration; scanning 500 files completes in seconds (moov-only reads, cached).
 3. Selecting a recording with GPS shows the track on the map, the HUD and charts populate, and pressing play moves the marker along the track in step with the video; the marker never draws through no-fix segments.
 4. Clicking on the map track, a chart or the timeline seeks the video (across chapters) and all views stay consistent.
@@ -300,7 +310,7 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 6. GPX/CSV exports open in QGIS / pandas without cleanup; GPX contains only fixed points.
 7. A file without a GPMF track still plays; the UI states that no telemetry is available.
 8. On a forward-facing dashcam recording, hard braking moves the G-force ball to BRK, a right turn moves the gyro ball and the G-force ball to the right, and the attitude bubble stays near centre on level road (verified on HERO13 footage).
-9. With a HERO13 on USB in GoPro Connect mode, *Import from camera* lists the card within a second, files the chosen clips under `<destination>/<YYYY-MM-DD>/` with their LRV/THM sidecars at the USB 2.0 rate (≈43 MB/s), records them in the ledger, shows them unticked as "imported …" on the next visit, imports a ticked one again (verifying a copy that is still there instead of fetching it), resumes a stopped transfer from its `.part`, and the imported recordings appear in the library when the job ends.
+9. With a HERO13 on USB in GoPro Connect mode, *Import from camera* lists the card within a second, opens the Mac's folder panel in front of every window for the destination, files the chosen clips under `<destination>/<YYYY-MM-DD>/` with their LRV proxies (no THM) at the USB 2.0 rate (≈43 MB/s), records them in the ledger, shows them unticked as "imported …" on the next visit, imports a ticked one again (verifying a copy that is still there instead of fetching it), resumes a stopped transfer from its `.part`, and the imported recordings appear in the library when the job ends.
 
 ## 9. Known limitations and risks
 

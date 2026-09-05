@@ -5,6 +5,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dateFolder, filesFor, eligible, Importer } from '../server/importer.js';
 import { ImportLedger, importKey } from '../server/import-ledger.js';
 import { discoverCameraUrl, sizeOf } from '../server/gopro-camera.js';
+import { chooserArgs, chooserResult } from '../server/folder-picker.js';
 import { sampleCard, startFakeCamera } from './fake-camera.js';
 import { withTempDir } from './helpers.js';
 
@@ -36,12 +37,14 @@ test('the camera is found through the GoPro USB interface', () => {
   assert.equal(discoverCameraUrl({ lo0: [{ family: 'IPv4', address: '127.0.0.1' }], en0: [{ family: 'IPv4', address: '192.168.1.20' }] }), null);
 });
 
-test('modes: all = clip + LRV + THM sidecars, mp4 = MP4 files only', () => {
+test('modes: all = clip + LRV proxy (never the THM), mp4 = MP4 files only', () => {
   const gx4 = { dir: '100GOPRO', name: 'GX010004.MP4', size: 10, cre: 2, lrvSize: 5 };
   const gx5 = { dir: '100GOPRO', name: 'GX010005.MP4', size: 20, cre: 3, lrvSize: 0 };
   const jpg = { dir: '100GOPRO', name: 'GOPR0001.JPG', size: 1, cre: 1, lrvSize: 0 };
-  assert.deepEqual(filesFor(gx4, 'all').map((f) => f.name), ['GX010004.MP4', 'GL010004.LRV', 'GX010004.THM']);
-  assert.deepEqual(filesFor(gx5, 'all').map((f) => f.name), ['GX010005.MP4', 'GX010005.THM'], 'no LRV listed → none requested');
+  const old = { dir: '100GOPRO', name: 'GOPR0002.MP4', size: 30, cre: 4, lrvSize: 7 };
+  assert.deepEqual(filesFor(gx4, 'all').map((f) => f.name), ['GX010004.MP4', 'GL010004.LRV']);
+  assert.deepEqual(filesFor(gx5, 'all').map((f) => f.name), ['GX010005.MP4'], 'no LRV listed → none requested');
+  assert.deepEqual(filesFor(old, 'all').map((f) => f.name), ['GOPR0002.MP4', 'GOPR0002.LRV'], 'HERO5-era names keep their stem');
   assert.deepEqual(filesFor(jpg, 'all').map((f) => f.name), ['GOPR0001.JPG']);
   assert.deepEqual(filesFor(gx4, 'mp4').map((f) => f.name), ['GX010004.MP4']);
   assert.deepEqual(eligible([gx5, gx4, jpg], 'all').map((f) => f.name), ['GOPR0001.JPG', 'GX010004.MP4', 'GX010005.MP4'], 'oldest first');
@@ -57,7 +60,7 @@ test('no camera on USB gives an empty snapshot with a reason, not an error', asy
   assert.equal(snap.job, null);
 }));
 
-test('import all: date sub-folders, sidecars, ledger entries, absent thumbnails tolerated', async () => withTempDir(async (dir) => {
+test('import all: date sub-folders, LRV sidecars, ledger entries, no THM ever requested', async () => withTempDir(async (dir) => {
   const { cam, ledger, importer, card, dest } = await setup(dir);
   try {
     const snap = await importer.snapshot();
@@ -69,19 +72,19 @@ test('import all: date sub-folders, sidecars, ledger entries, absent thumbnails 
 
     const started = await importer.start({ dest, mode: 'all', keys: snap.items.map((it) => it.key) });
     assert.equal(started.state, 'running');
-    assert.equal(started.totalBytes, 10_000 + 2_000 + 20_000 + 1_000, 'thumbnails are not counted until fetched');
+    assert.equal(started.totalBytes, 10_000 + 2_000 + 20_000 + 1_000);
     const job = await finished(importer);
     assert.equal(job.state, 'done');
     assert.deepEqual(job.items.map((it) => [it.name, it.status]), [['GOPR0001.JPG', 'done'], ['GX010004.MP4', 'done'], ['GX010005.MP4', 'done']]);
-    assert.equal(job.totalBytes, 33_000 + 500, 'the one THM that exists is added once known');
-    assert.equal(job.doneBytes, 33_500);
+    assert.equal(job.doneBytes, 33_000);
 
-    for (const [name, folder] of [['GX010004.MP4', '2026-09-05'], ['GL010004.LRV', '2026-09-05'], ['GX010004.THM', '2026-09-05'], ['GX010005.MP4', '2026-09-05'], ['GOPR0001.JPG', '2026-09-04']]) {
+    for (const [name, folder] of [['GX010004.MP4', '2026-09-05'], ['GL010004.LRV', '2026-09-05'], ['GX010005.MP4', '2026-09-05'], ['GOPR0001.JPG', '2026-09-04']]) {
       assert.deepEqual(await readFile(path.join(dest, folder, name)), card.files.get(name), name);
     }
+    assert.ok(cam.hits.every((h) => !/\.THM$/i.test(h.path)), 'the THM on the card is never requested');
+    assert.equal(await sizeOf(path.join(dest, '2026-09-05', 'GX010004.THM')), 0, 'and never lands on disk');
     const gx5 = job.items.find((it) => it.name === 'GX010005.MP4');
-    assert.deepEqual(gx5.files.map((f) => [f.name, f.status]), [['GX010005.MP4', 'done'], ['GX010005.THM', 'absent']]);
-    assert.equal(await sizeOf(path.join(dest, '2026-09-05', 'GX010005.THM')), 0);
+    assert.deepEqual(gx5.files.map((f) => [f.name, f.status]), [['GX010005.MP4', 'done']]);
 
     assert.equal(ledger.size, 3);
     const onDisk = JSON.parse(await readFile(ledger.file, 'utf8'));
@@ -89,7 +92,7 @@ test('import all: date sub-folders, sidecars, ledger entries, absent thumbnails 
     const entry = onDisk.entries[keysOf(snap, ['GX010004.MP4'])[0]];
     assert.equal(entry.serial, 'C3531325563165');
     assert.equal(entry.dest, path.join(dest, '2026-09-05'));
-    assert.deepEqual(entry.files, ['GX010004.MP4', 'GL010004.LRV', 'GX010004.THM']);
+    assert.deepEqual(entry.files, ['GX010004.MP4', 'GL010004.LRV']);
 
     const after = await importer.snapshot();
     assert.ok(after.items.every((it) => it.imported?.dest.endsWith(it.date)), 'everything is now known to the ledger');
@@ -189,6 +192,16 @@ test('start() rejects bad input, a second job, and an unreachable camera with HT
     assert.equal((await importer.snapshot()).camera, null);
   } finally { await cam.close(); }
 }));
+
+test('the folder panel is scripted with escaped strings and its answer is parsed', () => {
+  const args = chooserArgs('Pick a "folder"', '/Users/bruce/GoPro Footage');
+  assert.deepEqual(args.slice(0, 2), ['-e', 'tell me to activate']);
+  assert.equal(args[3], 'set chosen to choose folder with prompt "Pick a \\"folder\\"" default location (POSIX file "/Users/bruce/GoPro Footage")');
+  assert.equal(args[5], 'POSIX path of chosen');
+  assert.equal(chooserResult(null, '/Users/bruce/GoPro Footage/\n', ''), '/Users/bruce/GoPro Footage');
+  assert.equal(chooserResult(Object.assign(new Error('Command failed'), { code: 1 }), '', 'execution error: User canceled. (-128)\n'), null, 'cancel is not an error');
+  assert.throws(() => chooserResult(new Error('spawn osascript ENOENT'), '', ''), /folder chooser failed: spawn osascript ENOENT/);
+});
 
 test('a corrupt ledger is refused rather than treated as empty', async () => withTempDir(async (dir) => {
   const file = path.join(dir, 'import-ledger.json');

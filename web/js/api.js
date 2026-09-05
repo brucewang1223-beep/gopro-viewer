@@ -17,6 +17,7 @@ export const api = {
   removeRoot: (id) => request(`/api/roots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   telemetry: (recordingId) => request(`/api/recordings/${encodeURIComponent(recordingId)}/telemetry`),
   importSource: () => request('/api/import'),
+  chooseImportFolder: (current) => request('/api/import/choose-folder', { method: 'POST', body: JSON.stringify({ current }) }),
   startImport: (body) => request('/api/import', { method: 'POST', body: JSON.stringify(body) }),
   importJob: () => request('/api/import/job'),
   cancelImport: () => request('/api/import/job', { method: 'DELETE' }),

@@ -107,11 +107,12 @@ media player, so the audio track is never rendered.
 *Import from camera* (header bar) copies clips straight from a GoPro connected by USB — no card
 reader, no Finder. Set the camera's USB connection to **GoPro Connect** (Preferences › Connections ›
 USB Connection; that is the default) and plug it in: it shows up as a small USB network, not as a
-drive, and the viewer talks to it over the Open GoPro HTTP API. The dialog lists the card, you type a
-destination folder (created if missing; `~` works) and pick **All files** (each clip's MP4 with its LRV
-proxy and THM thumbnail, plus any photos) or **MP4 only**. Clips are filed under
-`<destination>/<YYYY-MM-DD>/` by their recording date, verified by byte count, and the destination
-joins the library as a media root when the job ends.
+drive, and the viewer talks to it over the Open GoPro HTTP API. The dialog lists the card; *Choose
+folder…* opens the Mac's own folder panel for the destination (it starts on the folder you used last
+time), and you pick **All files** (each clip's MP4 with its LRV proxy, plus any photos) or **MP4 only**
+— THM thumbnails are never copied. Clips are filed under `<destination>/<YYYY-MM-DD>/` by their
+recording date, verified by byte count, and the destination joins the library as a media root when
+the job ends.
 
 Everything imported is remembered in `import-ledger.json`: a clip imported before is listed unticked
 and labelled *imported 2026-09-05 → …/2026-09-05*, whether or not the local copy still exists, and is
@@ -148,7 +149,7 @@ server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header,
           wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), app.js
           (routes), export.js (GPX/GeoJSON/CSV), map.js (K2 tile + glyph proxy), importer.js
           (import plan + job), gopro-camera.js (Open GoPro HTTP client over USB), import-ledger.js,
-          geo.js, config.js, json-cache.js, ids.js, log.js, index.js
+          folder-picker.js (macOS folder panel), geo.js, config.js, json-cache.js, ids.js, log.js, index.js
 web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player,
           map (+ map-route, map-controls, map-shields), charts, timeline, track, motion, gauges, hud,
           stats, library, import (dialog), util, api; styles/ holds the two K2 MapLibre styles
@@ -162,7 +163,7 @@ docs/     SPEC.md
 ## Development
 
 ```bash
-npm test          # 59 tests: demuxer, library, telemetry, exports, HTTP API, map proxy, route geometry, import
+npm test          # 60 tests: demuxer, library, telemetry, exports, HTTP API, map proxy, route geometry, import
 npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>
@@ -176,7 +177,9 @@ when a proxy exists). "No usable GPS fix": the camera never locked (GPS off, ind
 first seconds after power-on); the video still plays. Stale data after re-encoding a file:
 delete `.cache/`. "No camera" in the import dialog: the camera is asleep, its USB connection is set
 to MTP instead of GoPro Connect, or another program (MacDroid, adb) is holding the USB device — wake
-it, change the mode, quit the program, then *Look again*.
+it, change the mode, quit the program, then *Look again*. The folder panel is macOS-only: it is
+opened by the server on its own screen, so it works with `npm start` and with the launchd agent, but
+not when the server runs on another machine.
 
 ## Credits
 

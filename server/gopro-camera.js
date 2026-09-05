@@ -7,8 +7,8 @@
  *   GET /gopro/camera/info                    model, serial number, firmware
  *   GET /gopro/media/list                     { media: [{ d, fs: [{ n, s, cre, mod, glrv | ls }] }] }
  *   GET /videos/DCIM/<dir>/<file>             raw card file, HTTP Range honoured (resume)
- * The LRV proxy and THM thumbnail of a clip are not in the media list but are served from the
- * same DCIM folder under their card names (GL010004.LRV, GX010004.THM).
+ * The LRV proxy of a clip is not in the media list but is served from the same DCIM folder under
+ * its card name (GL010004.LRV); the list reports its size as `glrv`.
  */
 
 import os from 'node:os';
@@ -74,16 +74,16 @@ export class GoProCamera {
 
   /**
    * Download one card file to `dest`, continuing a partial `<dest>.part` where the camera honours
-   * Range, and verifying the byte count against `expectedSize` when it is known.
+   * Range, and verifying the byte count against `expectedSize`.
    * @returns {Promise<number|null>} bytes on disk, or null when the camera has no such file
    */
-  async download(dir, name, dest, { expectedSize = null, onProgress = () => {}, signal } = {}) {
+  async download(dir, name, dest, { expectedSize, onProgress = () => {}, signal }) {
     const part = `${dest}.part`;
     let offset = await sizeOf(part);
-    if (expectedSize != null && offset >= expectedSize) offset = 0;      // stale or oversized leftover: start over
+    if (offset >= expectedSize) offset = 0;                              // stale or oversized leftover: start over
     if (!(await this.#fetchInto(this.fileUrl(dir, name), part, offset, { onProgress, signal }))) return null;
     const size = await sizeOf(part);
-    if (expectedSize != null && size !== expectedSize) throw new Error(`${name}: got ${size} bytes, expected ${expectedSize}`);
+    if (size !== expectedSize) throw new Error(`${name}: got ${size} bytes, expected ${expectedSize}`);
     await rename(part, dest);
     return size;
   }

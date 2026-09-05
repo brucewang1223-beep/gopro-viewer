@@ -112,12 +112,13 @@
       <button type="button" id="import-close" class="btn btn-ghost btn-icon" title="Close (Esc) — a running import carries on">✕</button>
     </div>
     <div class="import-options">
-      <label class="import-dest">Destination
-        <input id="import-dest" type="text" placeholder="/Users/you/GoPro Footage — clips are filed under <destination>/<YYYY-MM-DD>/" spellcheck="false">
-      </label>
+      <div class="import-dest">Destination
+        <code id="import-dest" class="import-path" title="Clips are filed under <destination>/<YYYY-MM-DD>/"></code>
+        <button type="button" id="import-choose" class="btn" title="Pick the destination in the Mac's folder panel">Choose folder…</button>
+      </div>
       <div class="import-modes">
-        <label class="ctl toggle" title="Every clip with the camera's LRV proxy and THM thumbnail (photos too)"><input type="radio" name="import-mode" value="all" checked> All files <small>MP4 + LRV + THM</small></label>
-        <label class="ctl toggle" title="MP4 files only — no proxies, thumbnails or photos"><input type="radio" name="import-mode" value="mp4"> MP4 only</label>
+        <label class="ctl toggle" title="Every clip with the camera's LRV proxy (photos too); THM thumbnails are never imported"><input type="radio" name="import-mode" value="all" checked> All files <small>MP4 + LRV</small></label>
+        <label class="ctl toggle" title="MP4 files only — no proxies, no photos"><input type="radio" name="import-mode" value="mp4"> MP4 only</label>
       </div>
     </div>
     <div id="import-list" class="import-list"></div>

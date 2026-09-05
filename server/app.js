@@ -15,6 +15,7 @@
  *   GET  /api/recordings/:id/export.geojson    driven route as a FeatureCollection of LineStrings
  *   GET  /api/recordings/:id/export.csv?stream=gps|accl|gyro
  *   GET  /api/import                       camera on USB + card files, each marked if imported before
+ *   POST /api/import/choose-folder {current}   native macOS folder panel on the server's screen → { path | null }
  *   POST /api/import       {dest, mode, keys}   start copying the chosen files into <dest>/<date>/ (202; 409 while one runs)
  *   GET  /api/import/job                   progress of the current / last import
  *   DELETE /api/import/job                 cancel the running import
@@ -24,7 +25,6 @@
  */
 
 import express from 'express';
-import os from 'node:os';
 import path from 'node:path';
 import { stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -35,6 +35,7 @@ import { toGpx, toCsv, toGeoJson } from './export.js';
 import { tileProxy, fontProxy } from './map.js';
 import { ImportLedger } from './import-ledger.js';
 import { Importer } from './importer.js';
+import { chooseFolder } from './folder-picker.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
 
@@ -84,13 +85,6 @@ async function resolveDirectory(input) {
     return { error: `directory not found: ${dir}` };
   }
   return { path: dir };
-}
-
-/** `~` and `~/…` as typed in the import dialog → the home directory. */
-function expandHome(input) {
-  const s = typeof input === 'string' ? input.trim() : '';
-  if (s === '~' || s.startsWith('~/')) return path.join(os.homedir(), s.slice(1));
-  return s;
 }
 
 /** Media roots: the one place that changes cfg.roots, the library and config.json together. */
@@ -183,15 +177,19 @@ function telemetryRoutes(router, { library, telemetry }) {
   }));
 }
 
-/** Import from the camera: snapshot, start (remembering destination + mode in config.json), progress, cancel. */
+/** Import from the camera: snapshot, folder panel, start (remembering destination + mode in config.json), progress, cancel. */
 function importRoutes(router, { cfg, importer, roots }) {
   router.get('/import', asyncRoute(async (req, res) => {
     const snapshot = await importer.snapshot();
     res.json({ ...snapshot, defaults: { dest: cfg.import.dest, mode: cfg.import.mode } });
   }));
+  router.post('/import/choose-folder', asyncRoute(async (req, res) => {
+    const current = typeof req.body?.current === 'string' ? req.body.current : cfg.import.dest;
+    res.json({ path: await chooseFolder({ prompt: 'Import the clips into this folder (a YYYY-MM-DD sub-folder is created per recording day)', startDir: current }) });
+  }));
   router.post('/import', asyncRoute(async (req, res) => {
     const { dest, mode, keys } = req.body ?? {};
-    const job = await importer.start({ dest: expandHome(dest), mode, keys });
+    const job = await importer.start({ dest, mode, keys });
     cfg.import = { ...cfg.import, dest: job.dest, mode };
     try { await saveConfig(cfg); } catch (e) { log.warn(`config not saved: ${e.message}`); }
     res.status(202).json(job);
