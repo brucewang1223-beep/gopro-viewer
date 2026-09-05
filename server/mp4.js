@@ -16,7 +16,8 @@
 
 import { open, stat } from 'node:fs/promises';
 
-const MAX_MOOV_BYTES = 256 * 1024 * 1024; // safety cap (GoPro moov is typically < 10 MB)
+const MAX_MOOV_BYTES = 256 * 1024 * 1024;   // safety cap (GoPro moov is typically < 10 MB)
+const MAX_SAMPLE_BYTES = 256 * 1024 * 1024; // the whole telemetry track of a day-long recording is a few hundred MB at most
 const MAC_EPOCH_OFFSET_MS = 2082844800000; // 1904-01-01 → 1970-01-01 in ms
 const CODEC_BY_FORMAT = { avc1: 'h264', avc3: 'h264', hvc1: 'hevc', hev1: 'hevc', mp4a: 'aac' };
 const TRAK_CONTAINERS = new Set(['mdia', 'minf', 'stbl']);
@@ -160,10 +161,17 @@ function parseStsd(buf, box) {
   return entries;
 }
 
+/** A row count the box cannot hold is a corrupt table, not a reason to read past it or allocate for it. */
+function checkRows(box, r, n, rowBytes) {
+  const max = Math.floor((box.end - r.pos) / rowBytes);
+  if (n > max) throw new Mp4Error(`Corrupt '${box.type}' table: ${n} rows declared, room for ${max}`);
+}
+
 /** Full box holding an entry count followed by fixed-size rows read by `readRow`. */
-function parseTable(buf, box, readRow) {
+function parseTable(buf, box, rowBytes, readRow) {
   const { version, r } = fullBox(buf, box);
   const n = r.u32();
+  checkRows(box, r, n, rowBytes);
   const rows = new Array(n);
   for (let i = 0; i < n; i++) rows[i] = readRow(r, version);
   return rows;
@@ -174,6 +182,7 @@ function parseStsz(buf, box) {
   const sampleSize = r.u32();
   const count = r.u32();
   if (sampleSize !== 0) return { sampleSize, count, sizes: null };
+  checkRows(box, r, count, 4);
   const sizes = new Uint32Array(count);
   for (let i = 0; i < count; i++) sizes[i] = r.u32();
   return { sampleSize, count, sizes };
@@ -182,11 +191,11 @@ function parseStsz(buf, box) {
 const STBL_PARSERS = {
   stsd: parseStsd,
   stsz: parseStsz,
-  stts: (buf, box) => parseTable(buf, box, (r) => ({ count: r.u32(), delta: r.u32() })),
-  ctts: (buf, box) => parseTable(buf, box, (r, version) => ({ count: r.u32(), offset: version === 1 ? r.i32() : r.u32() })),
-  stsc: (buf, box) => parseTable(buf, box, (r) => { const row = { firstChunk: r.u32(), samplesPerChunk: r.u32() }; r.skip(4); return row; }),
-  stco: (buf, box) => parseTable(buf, box, (r) => r.u32()),
-  co64: (buf, box) => parseTable(buf, box, (r) => r.u64()),
+  stts: (buf, box) => parseTable(buf, box, 8, (r) => ({ count: r.u32(), delta: r.u32() })),
+  ctts: (buf, box) => parseTable(buf, box, 8, (r, version) => ({ count: r.u32(), offset: version === 1 ? r.i32() : r.u32() })),
+  stsc: (buf, box) => parseTable(buf, box, 12, (r) => { const row = { firstChunk: r.u32(), samplesPerChunk: r.u32() }; r.skip(4); return row; }),
+  stco: (buf, box) => parseTable(buf, box, 4, (r) => r.u32()),
+  co64: (buf, box) => parseTable(buf, box, 8, (r) => r.u64()),
 };
 
 function parseTrak(buf, box) {
@@ -224,6 +233,7 @@ function parseMoov(buf, moov, filePath) {
     else if (b.type === 'udta') udta = parseUdta(buf, b);
   }
   if (!mvhd) throw new Mp4Error('moov has no mvhd', { filePath });
+  if (!(mvhd.timescale > 0)) throw new Mp4Error('mvhd has no timescale', { filePath });
   return { mvhd, traks, udta };
 }
 
@@ -263,6 +273,7 @@ function applyDecodeTimes(samples, stts) {
       samples[i].dts = t; samples[i].duration = delta; t += delta;
     }
   }
+  if (i < samples.length) throw new Mp4Error(`stts times ${i} of ${samples.length} samples`);
 }
 
 function applyCompositionOffsets(samples, ctts) {
@@ -293,20 +304,27 @@ function trackSize(entry, tkhd) {
   };
 }
 
+/** Timescale, duration and creation time of a track from its media header (the track header as a fallback for the time). */
+function trackTiming(t) {
+  const mdhd = t.mdhd ?? { timescale: 0, duration: 0, creationTime: null };
+  return {
+    timescale: mdhd.timescale,
+    durationSec: mdhd.timescale ? mdhd.duration / mdhd.timescale : 0,
+    creationTime: mdhd.creationTime ?? t.tkhd?.creationTime ?? null,
+  };
+}
+
 function describeTrack(t) {
   const entry = t.stbl.stsd?.[0];
   const format = entry?.format ?? null;
-  const mdhd = t.mdhd ?? { timescale: 0, duration: 0, creationTime: null };
   return {
     id: t.tkhd?.trackId ?? null,
     handler: t.handler,
     format,
     codec: CODEC_BY_FORMAT[format] ?? format,
-    timescale: mdhd.timescale,
-    durationSec: mdhd.timescale ? mdhd.duration / mdhd.timescale : 0,
     nbSamples: t.stbl.stsz?.count ?? 0,
+    ...trackTiming(t),
     ...trackSize(entry, t.tkhd),
-    creationTime: mdhd.creationTime ?? t.tkhd?.creationTime ?? null,
   };
 }
 
@@ -324,6 +342,7 @@ function audioSummary(t) {
 function gpmdSummary(t, stbl) {
   const out = { trackId: t.id, timescale: t.timescale, durationSec: t.durationSec, nbSamples: t.nbSamples, creationTime: t.creationTime, samples: null };
   if (!stbl) return out;
+  if (!(t.timescale > 0)) throw new Mp4Error('gpmd track has no timescale');
   const scale = 1000 / t.timescale;
   out.samples = buildSampleTable(stbl).map((s) => ({ offset: s.offset, size: s.size, ctsMs: s.cts * scale, durationMs: s.duration * scale }));
   return out;
@@ -401,12 +420,16 @@ function contiguousRuns(samples) {
   return runs;
 }
 
+const totalSize = (samples) => samples.reduce((a, s) => a + s.size, 0);
+
 /**
  * Read the given samples' bytes into one Buffer (in order). A short read — the file is
  * still being written or truncated — ends the result early; callers check the length.
  */
 export async function readSampleData(filePath, samples) {
-  const out = Buffer.alloc(samples.reduce((a, s) => a + s.size, 0));
+  const total = totalSize(samples);
+  if (total > MAX_SAMPLE_BYTES) throw new Mp4Error(`Sample data too large (${total} bytes)`, { filePath });
+  const out = Buffer.alloc(total);
   const fh = await open(filePath, 'r');
   try {
     let pos = 0;
@@ -430,31 +453,34 @@ export async function readSampleData(filePath, samples) {
 export async function probeGpmfStreams(filePath, info, { maxSamples = 3, keys = ['GPS9', 'GPS5', 'ACCL', 'GYRO', 'GRAV', 'CORI'] } = {}) {
   const meta = info ?? await readMp4Info(filePath);
   const samples = meta.gpmd?.samples?.slice(0, maxSamples) ?? [];
-  const found = new Set();
-  if (samples.length) {
-    const data = await readSampleData(filePath, samples);
-    let pos = 0;
-    for (const s of samples) {
-      const payload = data.subarray(pos, pos + s.size);
-      pos += s.size;
-      for (const k of keys) if (!found.has(k) && payload.includes(k, 0, 'latin1')) found.add(k);
-    }
-  }
+  const found = samples.length ? keysInPayloads(await readSampleData(filePath, samples), samples, keys) : new Set();
   return { gps: found.has('GPS9') || found.has('GPS5'), imu: found.has('ACCL') || found.has('GYRO'), keys: [...found] };
 }
 
+/** Which of `keys` occur in the payloads laid end to end in `data`. */
+function keysInPayloads(data, samples, keys) {
+  const found = new Set();
+  let pos = 0;
+  for (const s of samples) {
+    const payload = data.subarray(pos, pos + s.size);
+    pos += s.size;
+    for (const k of keys) if (!found.has(k) && payload.includes(k, 0, 'latin1')) found.add(k);
+  }
+  return found;
+}
+
 /**
- * Timing object expected by gopro-telemetry (cts/duration in ms). Following gpmf-extract,
- * `start` is the track creation time re-interpreted as local time (GoPro writes local
- * wall-clock time into the UTC field).
+ * Timing object gopro-telemetry expects for the given payloads (cts/duration in ms). `start`
+ * is the creation time as written; it only dates samples that carry no GPS time of their
+ * own (the viewer reads GPS time from the GPS stream and settles the camera clock's
+ * convention elsewhere, see camera-clock.js).
  */
-function gpmfTiming(meta, samples) {
-  const created = meta.gpmd.creationTime ?? meta.creationTime ?? new Date(0);
+export function gpmfTiming(meta, samples) {
   const video = meta.video;
   return {
     frameDuration: video?.fps ? 1 / video.fps : (video?.nbSamples ? meta.durationSec / video.nbSamples : 1 / 29.97),
     videoDuration: meta.durationSec,
-    start: new Date(created.getTime() + created.getTimezoneOffset() * 60000),
+    start: meta.gpmd.creationTime ?? meta.creationTime ?? new Date(0),
     samples: samples.map((s) => ({ cts: s.ctsMs, duration: s.durationMs })),
   };
 }
@@ -468,6 +494,6 @@ export async function readGpmfTrack(filePath, info) {
   const samples = meta.gpmd?.samples;
   if (!samples?.length) throw new Mp4Error('File has no GPMF (gpmd) track', { filePath });
   const rawData = await readSampleData(filePath, samples);
-  if (rawData.length !== samples.reduce((a, s) => a + s.size, 0)) throw new Mp4Error('Short read while extracting GPMF samples', { filePath });
+  if (rawData.length !== totalSize(samples)) throw new Mp4Error('Short read while extracting GPMF samples', { filePath });
   return { rawData, timing: gpmfTiming(meta, samples) };
 }

@@ -18,11 +18,12 @@ const tel = {
   gyro: null,
 };
 
-test('toGpx writes only fixed points, escapes names and includes ele/time/speed', () => {
+test('toGpx writes only fixed points, one segment per run, escapes names and includes ele/time/speed', () => {
   const gpx = toGpx(tel);
   assert.ok(gpx.startsWith('<?xml'));
   assert.ok(gpx.includes('<name>GX0001 &lt;test&gt;</name>'));
   assert.equal((gpx.match(/<trkpt /g) || []).length, 3, 'no-fix point excluded');
+  assert.equal((gpx.match(/<trkseg>/g) || []).length, 2, 'the no-fix point ends the first segment: no GPX viewer draws across it');
   assert.ok(gpx.includes('<ele>10</ele><time>2018-01-24T19:27:58.000Z</time>'));
   assert.ok(gpx.includes('<gpxtpx:speed>2.5</gpxtpx:speed>'));
   assert.ok(gpx.trim().endsWith('</gpx>'));
@@ -105,4 +106,13 @@ test('toCsv accl / gyro columns and empty streams', () => {
   assert.equal(accl.length, 3);
   const gyro = toCsv(tel, 'gyro').trim().split('\n');
   assert.equal(gyro.length, 1, 'header only when stream missing');
+});
+
+test('toGeoJson run statistics follow the speed rule while the per-point speeds stay raw', () => {
+  const flagged = { ...tel, gps: { ...tel.gps, fix: [3, 3, 3, 3], speedOk: [1, 1, 0, 0] } };
+  const [f] = JSON.parse(toGeoJson(flagged)).features;
+  assert.deepEqual(f.properties.coordinateProperties.speeds, [1, 1.5, 2, 2.5], 'every sample keeps the camera\'s own speed');
+  assert.equal(f.properties.maxSpeedMs, 1.5, 'the run maximum ignores the two untrusted samples, like the stats bar');
+  assert.equal(f.properties.avgSpeedMs, 1.25);
+  assert.equal(f.properties.points, 4);
 });

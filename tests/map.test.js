@@ -21,6 +21,7 @@ async function serve(map = MAP) {
   const app = express();
   app.use('/api/map', tileProxy(map));
   app.use('/api/map-fonts', fontProxy(map));
+  app.use((err, req, res, _next) => res.status(500).json({ error: err.message }));   // what server/app.js does, minus the logging (Express's own handler hides the message under NODE_ENV=production)
   const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.on('listening', r));
   return { server, base: `http://127.0.0.1:${server.address().port}` };
@@ -68,4 +69,25 @@ test('without a token the proxy reports the misconfiguration instead of calling 
   assert.equal(res.status, 503);
   assert.match((await res.json()).error, /not configured/);
   assert.deepEqual(calls, []);
+});
+
+test('a fontstack of dots is refused even when the client does not normalise the path', async () => {
+  const http = await import('node:http');
+  const raw = (path) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: new URL(ctx.base).port, path, method: 'GET' }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    req.on('error', reject); req.end();
+  });
+  assert.equal(await raw('/api/map-fonts/../0-255.pbf'), 400);
+  assert.equal(await raw('/api/map-fonts/%2e%2e/0-255.pbf'), 400);
+  assert.equal(await raw('/api/map-fonts/Noto%20Sans%20Regular/0-255.pbf'), 200);
+  assert.deepEqual(calls, ['https://map.example/styles/fonts/Noto%20Sans%20Regular/0-255.pbf']);
+});
+
+test('the token never appears in an error the proxy reports', async () => {
+  globalThis.fetch = async (url) => { throw new TypeError(`Failed to parse URL from ${url}`); };
+  const res = await get(`${ctx.base}/api/map/v2/tiles/UAE-Vector/14/10677/7047.pbf`);
+  assert.equal(res.status, 500);
+  const body = await res.text();
+  assert.ok(!body.includes('s3cret'), body);
+  assert.ok(body.includes('***'), 'the token is masked, the rest of the message kept');
 });

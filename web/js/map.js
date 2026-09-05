@@ -67,8 +67,23 @@ export class TrackMap {
     this.userInteracting = false;
     this.styleReady = false;
     this.lastPaint = 0;
+    this.map = this.#createMap(el);
+    this.routeHandlers = {
+      click: (e) => this.#seekTo(e.lngLat),
+      enter: () => { this.map.getCanvas().style.cursor = 'pointer'; },
+      leave: () => { this.map.getCanvas().style.cursor = ''; },
+    };
+    this.#addControls();
+    this.#addMarker();
+    this.map.on('style.load', () => this.#onStyleLoad());
+    this.#watchInteraction();
+  }
 
-    this.map = new maplibregl.Map({
+  /* ---------- setup ---------- */
+
+  /** The MapLibre map on the current basemap, north-up, with the keyboard left to the player. */
+  #createMap(el) {
+    const map = new maplibregl.Map({
       container: el,
       style: this.basemaps[this.basemap].style,
       center: HOME.center,
@@ -80,20 +95,10 @@ export class TrackMap {
       attributionControl: { compact: true },
       transformRequest: absolute,
     });
-    this.map.keyboard.disable();               // ← / → drive the player, not the map
-    this.map.touchZoomRotate.disableRotation();
-    this.#addControls();
-    this.#addMarker();
-    this.routeHandlers = {
-      click: (e) => this.#seekTo(e.lngLat),
-      enter: () => { this.map.getCanvas().style.cursor = 'pointer'; },
-      leave: () => { this.map.getCanvas().style.cursor = ''; },
-    };
-    this.map.on('style.load', () => this.#onStyleLoad());
-    this.#watchInteraction();
+    map.keyboard.disable();               // ← / → drive the player, not the map
+    map.touchZoomRotate.disableRotation();
+    return map;
   }
-
-  /* ---------- setup ---------- */
 
   #addControls() {
     this.map.addControl(new ButtonsControl([
@@ -228,9 +233,10 @@ export class TrackMap {
     this.fitTrack({ animate: false });
   }
 
-  /** Update marker and progress from a Track.sampleAt() sample. */
+  /** Update marker and progress from a Track.sampleAt() sample; null (nothing around this time) hides the marker. */
   update(sample) {
-    if (!this.route || !sample) return;
+    if (!this.route) return;
+    if (!sample) { this.#showMarker(false); return; }
     const at = sample.valid && sample.lat != null ? [sample.lon, sample.lat] : null;
     this.#showMarker(!!at);
     if (at) { this.position = at; this.#moveMarker(sample, at); }

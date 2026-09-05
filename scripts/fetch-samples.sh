@@ -10,6 +10,10 @@ BASE="https://raw.githubusercontent.com/gopro/gpmf-parser/master/samples"
 for f in hero5.mp4 hero6.mp4 hero6a.mp4 hero7.mp4 hero8.mp4 Fusion.mp4 karma.mp4 max-heromode.mp4; do
   if [ -s "$DEST/$f" ]; then echo "exists  $f"; continue; fi
   echo "fetch   $f"
-  curl -fsSL --retry 3 -o "$DEST/$f.part" "$BASE/$f" && mv "$DEST/$f.part" "$DEST/$f"
+  if curl -fsSL --retry 3 -o "$DEST/$f.part" "$BASE/$f"; then
+    mv "$DEST/$f.part" "$DEST/$f"
+  else
+    echo "failed  $f (see the curl error above)" >&2; rm -f "$DEST/$f.part"; exit 1
+  fi
 done
 echo "done → $DEST"

@@ -69,7 +69,8 @@ lives in `~/Applications/Chrome Apps.localized/`; right-click its Dock icon → 
 
 ## Using the viewer
 
-Pick a recording in the sidebar (grouped by date; chapters of one recording are merged).
+Pick a recording in the sidebar (grouped by the camera's local recording date; chapters of one recording
+are merged; hover a recording for its UTC start when the file allows it).
 The video, map, HUD and charts share one timeline: click anywhere on the map track, a
 chart or the timeline bar to seek; drag on a chart to zoom (double-click resets).
 The map fits the whole route when a recording is selected; the travelled part is drawn in
@@ -159,10 +160,12 @@ Multiple files are treated as consecutive chapters of one recording.
 ```
 server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header, sensor
           orientation), gpmf-probe.js (scan-time GPS fix probe), decode.js (gopro-telemetry
-          wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), app.js
-          (routes), export.js (GPX/GeoJSON/CSV), map.js (K2 tile + glyph proxy), importer.js
-          (import plan + job), gopro-camera.js (Open GoPro HTTP client over USB), import-ledger.js,
-          folder-picker.js (macOS folder panel), geo.js, config.js, json-cache.js, ids.js, log.js, index.js
+          wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), camera-clock.js
+          (what the creation time means per camera generation), app.js (routes), export.js
+          (GPX/GeoJSON/CSV), map.js (K2 tile + glyph proxy), importer.js (import plan + job),
+          gopro-camera.js (Open GoPro HTTP client over USB), import-ledger.js, folder-picker.js
+          (macOS folder panel), geo.js (positions, runs, run statistics, speed rule), config.js,
+          fs-util.js, http-error.js, json-cache.js, ids.js, log.js, index.js
 web/      browser UI (plain ES modules, no build step; PWA manifest + icons): app.js (wiring, keys), player,
           map (+ map-route, map-controls, map-shields), charts, timeline, track, motion, gauges, hud,
           stats, library, import (dialog), util, api; styles/ holds the two K2 MapLibre styles and the
@@ -178,8 +181,8 @@ docs/     SPEC.md, screenshots/
 ## Development
 
 ```bash
-npm test          # 66 tests: demuxer, library, telemetry, exports, HTTP API, map proxy + OSM styles, route geometry, import
-npm run lint      # ESLint: no unused code, functions ≤ 50 lines, complexity ≤ 15
+npm test          # 103 tests: demuxer, library, camera clock, telemetry + geodesy, exports, config, HTTP API, map proxy + OSM styles, route geometry, browser helpers, import
+npm run lint      # ESLint, warnings fail: no unused code, functions ≤ 40 lines, complexity ≤ 12
 npm run dev       # server with --watch
 LOG_LEVEL=debug npm start -- --media <dir>
 ```

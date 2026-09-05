@@ -12,6 +12,8 @@
 
 import { lowerIndex, bearingDeg } from './util.js';
 
+const MAX_SAMPLE_GAP_SEC = 2.5;   // beyond this from the nearest sample the stream has nothing to say
+
 export class Track {
   constructor(tel, { minFix = 2 } = {}) {
     this.tel = tel;
@@ -37,35 +39,40 @@ export class Track {
   }
 
   /**
-   * Interpolated GPS state at global time t. `speed2d` / `speed3d` are null wherever the
-   * fix geometry is too weak to trust them, so every readout shows "--" instead of a number.
-   * @returns {{ i:number, lat:number, lon:number, alt:number, speed2d:number|null, speed3d:number|null,
+   * Interpolated GPS state at global time t, or null before the first / after the last sample.
+   * Position, altitude and speed are null wherever the sample does not qualify (no position,
+   * or a fix too weak to trust its speed), so every readout shows "--" instead of a number, and
+   * nothing is interpolated towards a sample that does not qualify itself.
+   * @returns {{ i:number, lat:number|null, lon:number|null, alt:number|null, speed2d:number|null, speed3d:number|null,
    *   fix:number|null, dop:number|null, heading:number|null, valid:boolean, utc:number|null } | null}
    */
   sampleAt(t) {
     const g = this.gps;
     if (!g || !g.n) return null;
-    let i = lowerIndex(g.t, t);
-    if (i < 0) i = 0;
+    const i = Math.max(0, lowerIndex(g.t, t));
     const j = Math.min(i + 1, g.n - 1);
-    const t0 = g.t[i]; const t1 = g.t[j];
-    let k = 0;
-    if (j !== i && t1 > t0 && t >= t0 && t <= t1 && (t1 - t0) < 2.5) k = (t - t0) / (t1 - t0);
-    const both = this.valid[i] && this.valid[j];
-    const lerp = (a, b) => (a == null ? b : b == null ? a : a + (b - a) * k);
-    const out = {
+    if (Math.min(Math.abs(t - g.t[i]), Math.abs(g.t[j] - t)) > MAX_SAMPLE_GAP_SEC) return null;
+    const k = this.#blend(i, j, t);
+    // a column value at i, blended towards j only when j qualifies too; null when i does not qualify
+    const value = (col, ok) => (!ok[i] || col[i] == null ? null : (ok[j] && col[j] != null ? col[i] + (col[j] - col[i]) * k : col[i]));
+    return {
       i, valid: this.valid[i],
-      lat: both ? lerp(g.lat[i], g.lat[j]) : g.lat[i],
-      lon: both ? lerp(g.lon[i], g.lon[j]) : g.lon[i],
-      alt: lerp(g.alt[i], g.alt[j]),
-      speed2d: this.precise[i] ? lerp(g.speed2d[i], g.speed2d[j]) : null,
-      speed3d: this.precise[i] ? lerp(g.speed3d[i], g.speed3d[j]) : null,
+      lat: value(g.lat, this.valid),
+      lon: value(g.lon, this.valid),
+      alt: value(g.alt, this.valid),
+      speed2d: value(g.speed2d, this.precise),
+      speed3d: value(g.speed3d, this.precise),
       fix: g.fix[i], dop: g.dop[i],
       utc: this.utcOffsetMs != null ? this.utcOffsetMs + t * 1000 : g.utc[i],
-      heading: null,
+      heading: this.headingAt(i),
     };
-    out.heading = this.headingAt(i);
-    return out;
+  }
+
+  /** Blend factor from sample i towards sample j at time t (0 unless t lies between two close samples). */
+  #blend(i, j, t) {
+    const t0 = this.gps.t[i]; const t1 = this.gps.t[j];
+    if (j === i || !(t1 > t0) || t < t0 || t > t1 || t1 - t0 >= MAX_SAMPLE_GAP_SEC) return 0;
+    return (t - t0) / (t1 - t0);
   }
 
   /** Heading from a small window around index i (null when stationary or invalid). */
@@ -102,14 +109,13 @@ export class Track {
   runs(maxGapSec = 5) {
     const g = this.gps; const out = [];
     if (!g) return out;
-    let start = -1; let prev = -1;
+    let start = -1;
     for (let i = 0; i < g.n; i++) {
-      if (!this.valid[i]) { if (start >= 0) out.push({ start, end: prev }); start = -1; continue; }
+      if (!this.valid[i]) { if (start >= 0) out.push({ start, end: i - 1 }); start = -1; continue; }
       if (start < 0) start = i;
-      else if (g.t[i] - g.t[prev] > maxGapSec) { out.push({ start, end: prev }); start = i; }
-      prev = i;
+      else if (g.t[i] - g.t[i - 1] > maxGapSec) { out.push({ start, end: i - 1 }); start = i; }
     }
-    if (start >= 0) out.push({ start, end: prev });
+    if (start >= 0) out.push({ start, end: g.n - 1 });
     return out;
   }
 }

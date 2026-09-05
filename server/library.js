@@ -16,12 +16,14 @@ import path from 'node:path';
 import { readMp4Info, probeGpmfStreams } from './mp4.js';
 import { probeGpsFix } from './gpmf-probe.js';
 import { headerSettingsSummary } from './gpmf-klv.js';
+import { clockConvention, startTimes } from './camera-clock.js';
 import { readJsonCache, writeJsonCache } from './json-cache.js';
+import { isDirectory } from './fs-util.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
 
 const log = createLogger('library');
-const INFO_VERSION = 5; // bump when the cached per-file info shape changes
+const INFO_VERSION = 6; // bump when the cached per-file info shape changes
 
 const VIDEO_EXT = new Set(['.mp4', '.mov']);
 const PROXY_EXT = new Set(['.lrv']);
@@ -30,7 +32,7 @@ const MEDIA_EXT = new Set([...VIDEO_EXT, ...PROXY_EXT, ...THUMB_EXT, '.360']);
 const SKIP_DIRS = new Set(['node_modules', '.git', '.cache', '.Trashes', '.Spotlight-V100', '.fseventsd']);
 const MAX_DEPTH = 8;
 
-const CHAPTERED_RE = /^(GX|GH|GL|GS|GP)([0-9A-Z]{2})(\d{4})$/i;
+const CHAPTERED_RE = /^(GX|GH|GL|GS|GP)(\d{2})(\d{4})$/i;
 const LEGACY_RE = /^GOPR(\d{4})$/i;
 
 /* ---------- file names ---------- */
@@ -45,7 +47,7 @@ function kindOf(ext) {
 function parseChapteredName(prefix, chapter, number, ext) {
   const family = prefix === 'GP' ? 'GOPR' : 'GX';
   if (prefix === 'GS' || ext === '.360') return { family: 'GS', chapter, number, kind: '360', encoding: 'hevc' };
-  if (prefix === 'GL' || PROXY_EXT.has(ext)) return { family: 'GX', chapter, number, kind: 'proxy', encoding: 'h264' };
+  if (prefix === 'GL' || PROXY_EXT.has(ext)) return { family, chapter, number, kind: 'proxy', encoding: 'h264' };
   if (THUMB_EXT.has(ext)) return { family, chapter, number, kind: 'thumb', encoding: null };
   return { family, chapter, number, kind: kindOf(ext), encoding: prefix === 'GX' ? 'hevc' : 'h264' };
 }
@@ -58,7 +60,7 @@ export function parseGoProName(fileName) {
   const ext = path.extname(fileName).toLowerCase();
   const base = path.basename(fileName, path.extname(fileName));
   const chaptered = CHAPTERED_RE.exec(base);
-  if (chaptered) return parseChapteredName(chaptered[1].toUpperCase(), chaptered[2].toUpperCase(), chaptered[3], ext);
+  if (chaptered) return parseChapteredName(chaptered[1].toUpperCase(), chaptered[2], chaptered[3], ext);
   const legacy = LEGACY_RE.exec(base);
   if (!legacy) return null;
   const kind = kindOf(ext);
@@ -66,6 +68,14 @@ export function parseGoProName(fileName) {
 }
 
 /* ---------- directory scan ---------- */
+
+/** Directory / file nature of an entry, following symlinks (a linked footage folder is a common setup). */
+async function entryKind(ent, full) {
+  if (ent.isSymbolicLink()) {
+    try { const st = await stat(full); return st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other'; } catch { return 'other'; }
+  }
+  return ent.isDirectory() ? 'dir' : ent.isFile() ? 'file' : 'other';
+}
 
 async function walk(dir, out, depth = 0) {
   let entries;
@@ -78,19 +88,10 @@ async function walk(dir, out, depth = 0) {
   for (const ent of entries) {
     if (ent.name.startsWith('.') || SKIP_DIRS.has(ent.name)) continue;
     const full = path.join(dir, ent.name);
-    if (ent.isDirectory()) { if (depth < MAX_DEPTH) await walk(full, out, depth + 1); }
-    else if (ent.isFile() && MEDIA_EXT.has(path.extname(ent.name).toLowerCase())) out.push(full);
+    const kind = await entryKind(ent, full);
+    if (kind === 'dir') { if (depth < MAX_DEPTH) await walk(full, out, depth + 1); }
+    else if (kind === 'file' && MEDIA_EXT.has(path.extname(ent.name).toLowerCase())) out.push(full);
   }
-}
-
-async function isDirectory(root) {
-  try {
-    if ((await stat(root)).isDirectory()) return true;
-    log.warn(`media root is not a directory: ${root}`);
-  } catch {
-    log.warn(`media root not found: ${root}`);
-  }
-  return false;
 }
 
 async function fileRecord(filePath, rootId) {
@@ -116,11 +117,12 @@ function addToGroup(group, file) {
   else if (kind === 'thumb') group.thumbs.push(file);
 }
 
-/** Register every file in `files` and group them into candidate recordings. */
+/** Register every file in `paths` and group them into candidate recordings; a file that vanished since the listing is skipped. */
 async function groupFiles(paths, rootId, files) {
   const groups = new Map();
   for (const p of paths) {
-    const file = await fileRecord(p, rootId);
+    let file;
+    try { file = await fileRecord(p, rootId); } catch (e) { log.warn(`skipping ${p}: ${e.message}`); continue; }
     files.set(file.id, file);
     const key = groupKey(file);
     if (!key) continue; // stray thumbnails / proxies that are not GoPro-named
@@ -134,7 +136,7 @@ async function groupFiles(paths, rootId, files) {
 
 /** Which streams the GPMF track carries and whether GPS ever had a fix — probes only, no full decode. */
 async function probeTelemetry(filePath, info) {
-  const result = { gps: false, imu: false, keys: [], hasFix: false, fixRatio: 0 };
+  const result = { gps: false, imu: false, keys: [], hasFix: false, fixRatio: 0, utcAtStartMs: null };
   if (!info.gpmd?.samples?.length) return result;
   try {
     Object.assign(result, await probeGpmfStreams(filePath, info));
@@ -144,7 +146,7 @@ async function probeTelemetry(filePath, info) {
   if (!result.gps) return result;
   try {
     const fix = await probeGpsFix(filePath, info);
-    result.hasFix = fix.hasFix; result.fixRatio = fix.fixRatio;
+    Object.assign(result, { hasFix: fix.hasFix, fixRatio: fix.fixRatio, utcAtStartMs: fix.utcAtStartMs });
   } catch (e) {
     log.warn(`fix probe failed for ${filePath}: ${e.message}`);
   }
@@ -154,11 +156,15 @@ async function probeTelemetry(filePath, info) {
 function slimInfo(info, mtimeMs, probe) {
   const video = info.video ? { ...info.video } : null;
   if (video?.fps) video.fps = Math.round(video.fps * 1000) / 1000;
+  const creationTime = info.creationTime ? info.creationTime.toISOString() : null;
+  const settings = headerSettingsSummary(info.udta?.gpmfHeader);
   return {
     v: INFO_VERSION,
     fileSize: info.fileSize,
     mtimeMs,
-    creationTime: info.creationTime ? info.creationTime.toISOString() : null,
+    creationTime,
+    clock: clockConvention({ creationTime, settings, gpsStartUtcMs: probe.utcAtStartMs }),  // 'utc' | 'local' | null: what the creation time means
+    gpsStartUtc: probe.utcAtStartMs != null ? new Date(probe.utcAtStartMs).toISOString() : null,
     durationSec: info.durationSec,
     video,
     audio: info.audio,
@@ -170,13 +176,15 @@ function slimInfo(info, mtimeMs, probe) {
     gpmdKeys: probe.keys,
     gpmdSamples: info.gpmd?.nbSamples ?? 0,
     firmware: info.udta?.firmware ?? null,
-    settings: headerSettingsSummary(info.udta?.gpmfHeader),
+    settings,
   };
 }
 
 /* ---------- recordings ---------- */
 
-const byChapter = (a, b) => (a.parsed?.chapter ?? '').localeCompare(b.parsed?.chapter ?? '') || a.name.localeCompare(b.name);
+/** Chapter order; for the same chapter the camera's own .MP4 ranks before a .mov re-encode, then the name decides. */
+const extRank = (file) => (file.ext === '.mp4' ? 0 : 1);
+const byChapter = (a, b) => (a.parsed?.chapter ?? '').localeCompare(b.parsed?.chapter ?? '') || extRank(a) - extRank(b) || a.name.localeCompare(b.name);
 
 function chapterRecord(file, info, group, previous) {
   const chapter = file.parsed?.chapter ?? '00';
@@ -191,6 +199,8 @@ function chapterRecord(file, info, group, previous) {
     durationSec: info.durationSec,
     sizeBytes: file.sizeBytes,
     creationTime: info.creationTime,
+    clock: info.clock ?? null,
+    gpsStartUtc: info.gpsStartUtc ?? null,
     video: info.video,
     hasGpmd: info.hasGpmd,
     hasGps: !!info.hasGps,
@@ -210,6 +220,24 @@ function displayName(group, first) {
   return `${first.file.slice(0, 2).toUpperCase()}${group.parsed.number}`;
 }
 
+/** What the recording carries, from its chapters: any chapter with telemetry / GPS / a fix / IMU, every chapter with a proxy. */
+function capabilities(chapters) {
+  return {
+    hasGpmd: chapters.some((c) => c.hasGpmd),
+    hasGps: chapters.some((c) => c.hasGps),
+    hasGpsFix: chapters.some((c) => c.hasGpsFix),
+    hasImu: chapters.some((c) => c.hasImu),
+    hasProxy: chapters.every((c) => c.proxyId),
+  };
+}
+
+/** Start of the recording: the camera's local wall clock (as the sidebar shows it) and true UTC when known. */
+function recordingStart(first, fallbackStart) {
+  const gpsStartUtcMs = first.gpsStartUtc ? Date.parse(first.gpsStartUtc) : null;
+  const { local, utc } = startTimes({ creationTime: first.creationTime, settings: first.settings, gpsStartUtcMs });
+  return { startTime: local ?? fallbackStart, startTimeUtc: utc };
+}
+
 function recordingRecord({ key, group, rootId, chapters, warnings, fallbackStart }) {
   const first = chapters[0];
   return {
@@ -217,24 +245,32 @@ function recordingRecord({ key, group, rootId, chapters, warnings, fallbackStart
     name: displayName(group, first),
     dir: group.dir,
     rootId,
-    startTime: first.creationTime ?? fallbackStart,
+    ...recordingStart(first, fallbackStart),
     durationSec: chapters.reduce((a, c) => a + c.durationSec, 0),
     chapters,
     codec: first.video?.codec ?? null,
     width: first.video?.width ?? null,
     height: first.video?.height ?? null,
     fps: first.video?.fps ?? null,
-    hasGpmd: chapters.some((c) => c.hasGpmd),
-    hasGps: chapters.some((c) => c.hasGps),
-    hasGpsFix: chapters.some((c) => c.hasGpsFix),
-    hasImu: chapters.some((c) => c.hasImu),
-    hasProxy: chapters.every((c) => c.proxyId),
+    ...capabilities(chapters),
     thumbId: first.thumbId,
     firmware: first.firmware,
     settings: first.settings ?? null,
     sizeBytes: chapters.reduce((a, c) => a + c.sizeBytes, 0),
     warnings,
   };
+}
+
+/** Video files of a group in chapter order; a second file for the same chapter (GX010001.MP4 next to GX010001.mov) is reported and skipped. */
+function chapterFiles(group, warnings) {
+  const sorted = [...group.videos].sort(byChapter);
+  const kept = [];
+  for (const file of sorted) {
+    const last = kept[kept.length - 1];
+    if (last && file.parsed && last.parsed?.chapter === file.parsed.chapter) { warnings.push(`${file.name}: same chapter as ${last.name}, skipped`); continue; }
+    kept.push(file);
+  }
+  return kept;
 }
 
 export class Library {
@@ -246,12 +282,17 @@ export class Library {
     this.cacheDir = cacheDir;
     this.files = new Map();       // fileId → file record
     this.recordings = new Map();  // recordingId → recording
+    this.missing = new Set();     // root ids that were not on disk at the last scan
     this.scannedAt = null;
-    this.scanning = null;
+    this.scanning = null;         // the scan in progress
+    this.queued = null;           // the follow-up scan promised to callers that arrived during it
   }
 
   rootRecords() {
-    return this.roots.map((p) => ({ id: shortId('root', p), path: p }));
+    return this.roots.map((p) => {
+      const id = shortId('root', p);
+      return { id, path: p, exists: !this.missing.has(id) };
+    });
   }
 
   getFile(id) { return this.files.get(id) ?? null; }
@@ -264,9 +305,15 @@ export class Library {
     return { scannedAt: this.scannedAt, roots: this.rootRecords(), recordings };
   }
 
-  /** Scan all roots. Concurrent calls share one scan. */
+  /**
+   * Scan all roots. A call while a scan runs waits for it and then scans once more (shared
+   * by every such caller), so a root added meanwhile is part of the answer.
+   */
   async scan() {
-    if (this.scanning) return this.scanning;
+    if (this.scanning) {
+      this.queued ??= this.scanning.catch(() => null).then(() => { this.queued = null; return this.scan(); });
+      return this.queued;
+    }
     this.scanning = this.#scan().finally(() => { this.scanning = null; });
     return this.scanning;
   }
@@ -275,16 +322,18 @@ export class Library {
     const t0 = Date.now();
     const files = new Map();
     const recordings = new Map();
-    for (const root of this.rootRecords()) await this.#scanRoot(root, files, recordings);
+    const missing = new Set();
+    for (const root of this.rootRecords()) await this.#scanRoot(root, files, recordings, missing);
     this.files = files;
     this.recordings = recordings;
+    this.missing = missing;
     this.scannedAt = new Date().toISOString();
     log.info(`scan complete: ${recordings.size} recordings, ${files.size} files in ${Date.now() - t0} ms`);
     return this.toJSON();
   }
 
-  async #scanRoot(root, files, recordings) {
-    if (!(await isDirectory(root.path))) return;
+  async #scanRoot(root, files, recordings, missing) {
+    if (!(await isDirectory(root.path))) { log.warn(`media root not found: ${root.path}`); missing.add(root.id); return; }
     const paths = [];
     await walk(root.path, paths);
     log.info(`scanning ${root.path}: ${paths.length} candidate files`);
@@ -296,9 +345,8 @@ export class Library {
 
   async #buildRecording(key, group, rootId) {
     if (!group.videos.length) return null;
-    group.videos.sort(byChapter);
     const chapters = []; const warnings = [];
-    for (const file of group.videos) {
+    for (const file of chapterFiles(group, warnings)) {
       try {
         chapters.push(chapterRecord(file, await this.#fileInfo(file), group, chapters));
       } catch (e) {

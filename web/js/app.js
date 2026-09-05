@@ -14,9 +14,8 @@ import { MotionModel } from './motion.js';
 import { Gauges } from './gauges.js';
 import { updateHud, setHudChapter } from './hud.js';
 import { renderSettings, renderStats } from './stats.js';
-import { fmtTime, padL, el } from './util.js';
+import { $, fmtTime, padL, el } from './util.js';
 
-const $ = (id) => document.getElementById(id);
 const HUD_INTERVAL_MS = 80; // ~12 Hz is plenty for text
 const SKIP_STORAGE_KEY = 'gopro-viewer.skipStep';
 const MAP_STORAGE_KEY = 'gopro-viewer.map';
@@ -74,6 +73,7 @@ const importDialog = new ImportDialog($('import-dialog'), {
 
 function onPlayerState(s) {
   $('btn-play').textContent = s.playing ? '❚❚' : '▶';
+  $('btn-play').setAttribute('aria-label', s.playing ? 'Pause' : 'Play');
   const total = fmtTime(s.duration);
   $('time-total').textContent = total;
   timeWidth = total.length;
@@ -98,7 +98,7 @@ function onTime(t) {
   charts.setTime(t);
   if (!state.track) return;
   const sample = state.track.sampleAt(t);
-  if (sample) map.update(sample);
+  map.update(sample);   // null past the stream's end hides the marker rather than leaving it on a stale fix
   const motion = state.motion ? state.motion.at(t) : null;
   gauges.update(motion);
   const now = performance.now();
@@ -109,11 +109,12 @@ function onTime(t) {
 
 /* ---------- recording selection ---------- */
 
+/** Export links point at the selected recording; without one they lose their href, which also takes them out of the tab order. */
 function setExportLinks(recordingId) {
   for (const [id, kind, stream] of EXPORTS) {
     const link = $(id);
-    link.classList.toggle('disabled', !recordingId);
     if (recordingId) link.href = api.exportUrl(recordingId, kind, stream);
+    else link.removeAttribute('href');
   }
 }
 
@@ -173,7 +174,11 @@ function showTelemetry(rec, tel) {
 async function selectRecording(rec) {
   if (state.recording?.id === rec.id) return;
   resetViews(rec);
-  if (!rec.hasGpmd) { setStatus(`${rec.name}: no telemetry track in this file`); return; }
+  if (!rec.hasGpmd) {
+    setStatus(`${rec.name}: no telemetry track in this file`);
+    charts.showEmpty('No telemetry track in this file — video only.');
+    return;
+  }
   setStatus(`Loading telemetry for ${rec.name}…`, true);
   try {
     const tel = await api.telemetry(rec.id);
@@ -268,7 +273,7 @@ const KEYS = new Map([
   ['[', () => player.prevChapter()],
   [']', () => player.nextChapter()],
   ['m', () => toggle('follow')],
-  ['l', () => toggle('follow')],
+  ['l', () => toggle('follow')],   // L as in "lock on" — kept for the fingers that learnt it
   ['h', () => toggle('hud-toggle')],
   ['g', () => toggle('gauges-toggle')],
   ['f', () => map.fitTrack()],
@@ -278,6 +283,7 @@ const KEYS = new Map([
 ]);
 
 function onKeyDown(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;      // ⌘F, ⌘L, ⌘H … belong to the browser
   if (['input', 'select', 'textarea'].includes((e.target.tagName || '').toLowerCase())) return;
   if (document.querySelector('dialog[open]')) return; // a dialog owns the keyboard (Space must tick a box, not play)
   const action = KEYS.get(e.key) ?? KEYS.get(e.key.toLowerCase());

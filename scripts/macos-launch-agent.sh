@@ -15,6 +15,8 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
 LOG="$PROJECT_DIR/.cache/server.log"
+# XML-escape a value before it goes into the plist (a project path with & or < would otherwise break it)
+xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 PORT="$(node -p 'try { require(process.argv[1]).port ?? 8790 } catch { 8790 }' "$PROJECT_DIR/config.json" 2>/dev/null || echo 8790)"
 
 write_plist() {
@@ -24,24 +26,24 @@ write_plist() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>$LABEL</string>
+  <key>Label</key><string>$(xml "$LABEL")</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$NODE_BIN</string>
+    <string>$(xml "$NODE_BIN")</string>
     <string>server/index.js</string>
   </array>
-  <key>WorkingDirectory</key><string>$PROJECT_DIR</string>
+  <key>WorkingDirectory</key><string>$(xml "$PROJECT_DIR")</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key><string>$(dirname "$NODE_BIN"):/usr/local/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>$(xml "$(dirname "$NODE_BIN")"):/usr/local/bin:/usr/bin:/bin</string>
     <key>NODE_ENV</key><string>production</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key>
   <dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$LOG</string>
-  <key>StandardErrorPath</key><string>$LOG</string>
+  <key>StandardOutPath</key><string>$(xml "$LOG")</string>
+  <key>StandardErrorPath</key><string>$(xml "$LOG")</string>
 </dict>
 </plist>
 EOF

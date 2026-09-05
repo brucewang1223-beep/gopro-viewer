@@ -6,7 +6,7 @@
  *   ATTITUDE  bubble level: pitch / roll angles from the measured gravity direction
  */
 
-import { fmtSigned, padL, clamp } from './util.js';
+import { fmtSigned, padL, clamp, sizeCanvas } from './util.js';
 
 const CSS = {
   ring: 'rgba(230,233,239,.35)', ringStrong: 'rgba(230,233,239,.6)', cross: 'rgba(230,233,239,.18)',
@@ -36,6 +36,7 @@ export class Gauges {
     this.gFull = gFullScale; this.rateFull = rateFullScale; this.angleFull = angleFullScale;
     this.trail = [];
     this.enabled = true;
+    this.blank = false;   // drawn without data: nothing to redraw until data comes back
     this.gauges = Object.fromEntries(Object.keys(TITLES).map((key) => [key, this.#createGauge(key)]));
     this.clear();
   }
@@ -47,12 +48,8 @@ export class Gauges {
     const cap = document.createElement('div'); cap.className = 'gauge-cap';
     wrap.append(title, canvas, cap);
     this.container.append(wrap);
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(this.size * dpr); canvas.height = Math.round(this.size * dpr);
     canvas.style.width = `${this.size}px`; canvas.style.height = `${this.size}px`;
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    return { wrap, ctx, cap };
+    return { wrap, ctx: sizeCanvas(canvas, this.size, this.size), cap };
   }
 
   setEnabled(on) {
@@ -67,15 +64,18 @@ export class Gauges {
 
   clear() {
     this.trail = [];
+    this.blank = true;
     for (const [key, gauge] of Object.entries(this.gauges)) {
       this.#drawBase(key);
       gauge.cap.textContent = EMPTY;
     }
   }
 
-  /** @param {object|null} m MotionModel.at(t) result */
+  /** @param {object|null} m MotionModel.at(t) result — null (no data around t) blanks the gauges once, then costs nothing per frame */
   update(m) {
     if (!this.enabled) return;
+    if (!m) { if (!this.blank) this.clear(); return; }
+    this.blank = false;
     this.#drawG(m);
     this.#drawGyro(m);
     this.#drawAttitude(m);
@@ -120,7 +120,6 @@ export class Gauges {
   #drawG(m) {
     const { ctx, cap } = this.gauges.g;
     const { c, R } = this.#drawBase('g');
-    if (!m) { cap.textContent = EMPTY; return; }
     const k = R / this.gFull;
     const x = c + clamp(m.latG * k, -R, R);
     const y = c - clamp(m.lonG * k, -R, R);
@@ -132,7 +131,6 @@ export class Gauges {
   #drawGyro(m) {
     const { ctx, cap } = this.gauges.gyro;
     const { c, R } = this.#drawBase('gyro');
-    if (!m) { cap.textContent = EMPTY; return; }
     const k = R / this.rateFull;
     const x = c - clamp(m.yawDps * k, -R, R);   // + yaw = left turn → ball left
     const y = c - clamp(m.pitchDps * k, -R, R); // + pitch rate = nose rising → ball up
@@ -149,7 +147,6 @@ export class Gauges {
   #drawAttitude(m) {
     const { ctx, cap } = this.gauges.att;
     const { c, R } = this.#drawBase('att');
-    if (!m) { cap.textContent = EMPTY; return; }
     const full = Math.sin(this.angleFull * Math.PI / 180);
     const x = c + clamp((m.bubbleX / full) * R, -R, R);
     const y = c - clamp((m.bubbleY / full) * R, -R, R);

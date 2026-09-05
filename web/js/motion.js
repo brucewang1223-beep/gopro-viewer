@@ -82,7 +82,8 @@ export class MotionModel {
 
   #allocate(n) {
     for (const key of ['lonG', 'latG', 'vertG', 'pitchDeg', 'rollDeg', 'bubbleX', 'bubbleY', 'yawDps', 'pitchDps', 'rollDps']) this[key] = new Float32Array(n);
-    this.ok = new Uint8Array(n);
+    this.ok = new Uint8Array(n);       // the accelerometer-derived quantities are defined at bin i
+    this.gyroOk = new Uint8Array(n);   // and a gyro bin was close enough for the rates
   }
 
   /** Driver-frame quantities of accelerometer bin i given its gravity estimate; leaves ok[i] = 0 on gaps. */
@@ -104,6 +105,7 @@ export class MotionModel {
       this.yawDps[i] = dot(w, up) * RAD2DEG;        // + turning left (CCW seen from above)
       this.pitchDps[i] = dot(w, right) * RAD2DEG;   // + nose rising
       this.rollDps[i] = dot(w, forward) * RAD2DEG;  // + rolling right
+      this.gyroOk[i] = 1;
     }
     this.ok[i] = 1;
   }
@@ -128,13 +130,13 @@ export class MotionModel {
     };
   }
 
-  /** Column arrays for charts (plain arrays with nulls where the model is undefined). */
+  /** Column arrays for charts (plain arrays with nulls where the model is undefined; the gyro rates also where the gyro had a gap). */
   columns() {
-    const pick = (arr) => Array.from(arr, (v, i) => (this.ok[i] ? v : null));
+    const pick = (arr, ok = this.ok) => Array.from(arr, (v, i) => (ok[i] ? v : null));
     return {
       t: this.t,
       lonG: pick(this.lonG), latG: pick(this.latG), vertG: pick(this.vertG),
-      yawDps: pick(this.yawDps), pitchDps: pick(this.pitchDps), rollDps: pick(this.rollDps),
+      yawDps: pick(this.yawDps, this.gyroOk), pitchDps: pick(this.pitchDps, this.gyroOk), rollDps: pick(this.rollDps, this.gyroOk),
       pitchDeg: pick(this.pitchDeg), rollDeg: pick(this.rollDeg),
     };
   }

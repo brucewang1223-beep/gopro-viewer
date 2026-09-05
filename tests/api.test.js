@@ -39,12 +39,22 @@ test('health and config', async () => {
   assert.equal(c.body.roots[0].path, FIXTURES);
 });
 
-test('library lists recordings and hides absolute paths', async () => {
+test('library lists recordings without file paths in the chapters', async () => {
   const { status, body } = await json('/api/library');
   assert.equal(status, 200);
   assert.equal(body.recordings.length, 2);
-  assert.ok(JSON.stringify(body).indexOf(FIXTURES) === -1 || JSON.stringify(body.recordings).indexOf(FIXTURES + '/G') === -1);
   for (const r of body.recordings) for (const c of r.chapters) assert.ok(!c.path);
+  assert.deepEqual(body.roots.map((r) => r.exists), [true]);
+});
+
+test('requests addressed to another host name are refused (DNS rebinding), localhost spellings pass', async () => {
+  const http = await import('node:http');   // fetch() will not send a foreign Host header; a raw request does
+  const statusWithHost = (host) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: server.address().port, path: '/api/health', headers: { Host: host } }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    req.on('error', reject); req.end();
+  });
+  for (const host of ['evil.example', 'evil.example:8790', '127.0.0.1.evil.example']) assert.equal(await statusWithHost(host), 403, `Host: ${host}`);
+  for (const host of ['localhost', `127.0.0.1:${server.address().port}`, '[::1]:8790', 'LOCALHOST:8790']) assert.equal(await statusWithHost(host), 200, `Host: ${host}`);
 });
 
 test('media streaming honours Range requests', async () => {
@@ -106,6 +116,43 @@ test('telemetry and exports for a two-chapter recording', async () => {
   const lines = (await csv.text()).trim().split('\n');
   assert.equal(lines[0], 't_sec,x_ms2,y_ms2,z_ms2,mag_ms2,magmax_ms2');
   assert.ok(lines.length > 200);
+});
+
+test('a file with a non-Latin-1 name streams and exports like any other', async () => {
+  const { mkdir, copyFile } = await import('node:fs/promises');
+  const dir = path.join(tmp, 'cjk');
+  await mkdir(dir, { recursive: true });
+  await copyFile(path.join(FIXTURES, 'GX010001.MP4'), path.join(dir, '测试 Fahrt über Brücke 🚗.mp4'));
+  const added = await json('/api/roots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: dir }) });
+  assert.equal(added.status, 200);
+  const rec = added.body.recordings.find((r) => r.name.startsWith('测试'));
+  assert.ok(rec, 'the recording is listed under its file name');
+  const media = await fetch(`${base}/api/media/${rec.chapters[0].id}`, { headers: { Range: 'bytes=0-15' } });
+  assert.equal(media.status, 206);
+  assert.equal(media.headers.get('x-file-name'), null, 'the name is never a header value');
+  const gpx = await fetch(`${base}/api/recordings/${rec.id}/export.gpx`);
+  assert.equal(gpx.status, 200);
+  assert.match(gpx.headers.get('content-disposition'), /attachment; filename="[^"]*"; filename\*=UTF-8''%E6%B5%8B%E8%AF%95/);
+  assert.equal((await json('/api/health')).status, 200, 'and the server is still alive');
+  const removed = await json(`/api/roots/${added.body.roots.find((r) => r.path === dir).id}`, { method: 'DELETE' });
+  assert.equal(removed.status, 200);
+});
+
+test('a folder inside a configured root is not added twice', async () => {
+  const { mkdir, copyFile, rm } = await import('node:fs/promises');
+  const inside = path.join(tmp, 'outer', 'inner');
+  await mkdir(inside, { recursive: true });
+  await copyFile(path.join(FIXTURES, 'GH010002.MP4'), path.join(inside, 'GH010009.MP4'));
+  const post = (p) => json('/api/roots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+  const outer = await post(path.join(tmp, 'outer'));
+  assert.equal(outer.status, 200);
+  const before = outer.body.roots.length;
+  const again = await post(inside);
+  assert.equal(again.status, 200);
+  assert.equal(again.body.roots.length, before, 'covered by the outer root: rescanned, not added');
+  assert.ok(again.body.recordings.some((r) => r.name === 'GH0009'));
+  await json(`/api/roots/${outer.body.roots.find((r) => r.path === path.join(tmp, 'outer')).id}`, { method: 'DELETE' });
+  await rm(path.join(tmp, 'outer'), { recursive: true, force: true });
 });
 
 test('adding an invalid root is rejected, rescan works', async () => {

@@ -254,5 +254,6 @@ export function cameraFrameMapping({ orin, orio } = {}) {
     if (!'xyz'.includes(axis)) return cameraFrameMapping({}); // unexpected letters → default
     map.push({ axis, index: i, sign: order[i] === order[i].toUpperCase() ? 1 : -1 });
   }
+  if (new Set(map.map((m) => m.axis)).size !== 3) return cameraFrameMapping({}); // an axis named twice → default
   return { order, map, source };
 }

@@ -7,13 +7,13 @@
  */
 
 import { execFile } from 'node:child_process';
-import { stat } from 'node:fs/promises';
 import os from 'node:os';
+import { httpError } from './http-error.js';
+import { isDirectory } from './fs-util.js';
 
 const PICKER_TIMEOUT_MS = 10 * 60 * 1000;   // the panel waits for a person
 const CANCELLED = /\(-128\)|user cancell?ed/i; // AppleScript's "User canceled." (error -128)
 
-const httpError = (status, message) => Object.assign(new Error(message), { status });
 const quote = (s) => `"${String(s).replace(/(["\\])/g, '\\$1')}"`;
 
 /** `osascript` arguments for the chooser: prompt text and the folder it opens on. */
@@ -31,10 +31,6 @@ export function chooserResult(err, stdout, stderr) {
   if (!err) return stdout.trim().replace(/\/+$/, '') || null;
   if (CANCELLED.test(`${stderr} ${err.message}`)) return null;
   throw new Error(`folder chooser failed: ${(stderr || err.message).trim()}`);
-}
-
-async function isDirectory(p) {
-  try { return !!p && (await stat(p)).isDirectory(); } catch { return false; }
 }
 
 let pending = null;

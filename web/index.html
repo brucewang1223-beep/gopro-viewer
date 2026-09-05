@@ -16,7 +16,7 @@
   <header class="topbar">
     <div class="brand"><span class="brand-dot"></span>GoPro Viewer</div>
     <form id="root-form" class="root-form" autocomplete="off">
-      <input id="root-input" type="text" placeholder="Add media folder (absolute path, e.g. /Volumes/GOPRO/DCIM)" spellcheck="false">
+      <input id="root-input" type="text" placeholder="Add media folder (absolute path, e.g. /Volumes/GOPRO/DCIM)" aria-label="Media folder path" spellcheck="false">
       <button type="submit" class="btn">Add folder</button>
       <button type="button" id="rescan-btn" class="btn btn-ghost" title="Rescan media roots">Rescan</button>
       <button type="button" id="import-btn" class="btn" title="Copy new clips from the GoPro connected by USB into a folder of your choice">Import from camera</button>
@@ -26,7 +26,7 @@
 
   <aside class="sidebar">
     <div class="sidebar-head">
-      <input id="search" type="search" placeholder="Filter recordings…" spellcheck="false">
+      <input id="search" type="search" placeholder="Filter recordings…" aria-label="Filter recordings" spellcheck="false">
       <div id="roots" class="roots"></div>
     </div>
     <div id="library" class="library" role="list"></div>
@@ -62,7 +62,7 @@
       <div class="controls-left">
         <button id="btn-prev" class="btn btn-icon" title="Previous chapter ([)">⏮</button>
         <button id="btn-back" class="btn btn-icon" title="Back 5 s (←)">−5s</button>
-        <button id="btn-play" class="btn btn-icon btn-primary" title="Play / Pause (Space)">▶</button>
+        <button id="btn-play" class="btn btn-icon btn-primary" title="Play / Pause (Space)" aria-label="Play">▶</button>
         <button id="btn-fwd" class="btn btn-icon" title="Forward 5 s (→)">+5s</button>
         <label class="ctl" title="Step taken by ← / → and the −/+ buttons (Shift = ×6). A frame step pauses playback.">Skip
           <select id="skip-step">
@@ -92,10 +92,10 @@
         <label class="ctl toggle" title="Show telemetry overlay on the video (H)"><input type="checkbox" id="hud-toggle" checked> HUD</label>
         <label class="ctl toggle" title="Show G-force / gyro / attitude gauges on the video (G)"><input type="checkbox" id="gauges-toggle" checked> Gauges</label>
         <span class="ctl links export">Export
-          <a id="export-gpx" class="btn btn-ghost disabled" href="#" download>GPX</a>
-          <a id="export-geojson" class="btn btn-ghost disabled" href="#" download title="Driven route as GeoJSON (LineString per run, altitude, per-point times and speeds)">GeoJSON</a>
-          <a id="export-csv" class="btn btn-ghost disabled" href="#" download>CSV</a>
-          <a id="export-accl" class="btn btn-ghost disabled" href="#" download>IMU</a>
+          <a id="export-gpx" class="btn btn-ghost" download>GPX</a>
+          <a id="export-geojson" class="btn btn-ghost" download title="Driven route as GeoJSON (LineString per run, altitude, per-point times and speeds)">GeoJSON</a>
+          <a id="export-csv" class="btn btn-ghost" download>CSV</a>
+          <a id="export-accl" class="btn btn-ghost" download>IMU</a>
         </span>
       </div>
     </section>
@@ -105,9 +105,9 @@
     <section class="charts" id="charts"></section>
   </main>
 
-  <dialog id="import-dialog" class="dialog">
+  <dialog id="import-dialog" class="dialog" aria-labelledby="import-title">
     <div class="dialog-head">
-      <h2>Import from camera</h2>
+      <h2 id="import-title">Import from camera</h2>
       <span id="import-camera" class="dialog-sub" aria-live="polite"></span>
       <button type="button" id="import-close" class="btn btn-ghost btn-icon" title="Close (Esc) — a running import carries on">✕</button>
     </div>

@@ -6,7 +6,8 @@ node_modules/
 # local configuration (media roots, port) and the record of what was imported from the camera
 config.json
 import-ledger.json
-import-ledger.json.tmp
+# temporary files of atomic writes (config.json, the ledger, cache files)
+*.tmp
 
 # optional full-length sample files downloaded by `npm run samples` (the trimmed test fixtures are committed)
 samples/

@@ -6,7 +6,7 @@
  * A lightweight DOM playhead follows playback without redrawing the plots.
  */
 
-import { fmtTime, fmtSigned, padL, MS_TO_KMH, G } from './util.js';
+import { fmtTime, fmtSigned, fmtNum, padL, MS_TO_KMH, G } from './util.js';
 
 const SYNC_KEY = 'gopro-viewer';
 const C = {
@@ -19,7 +19,11 @@ const CLICK_TOLERANCE_PX = 4; // pointer travel beyond this is a zoom drag, not 
 
 /* ---------- chart specifications ---------- */
 
-/** Speed is charted only where the fix geometry is good enough to trust it; the rest is a gap. */
+/**
+ * Speed is charted only where the fix geometry is good enough to trust it, altitude only where
+ * the receiver had a position at all (a searching receiver writes altitudes of 10 000 m); the
+ * rest is a gap.
+ */
 function gpsSpecs(track) {
   const g = track.gps;
   return [
@@ -27,13 +31,13 @@ function gpsSpecs(track) {
       key: 'speed', title: 'Speed', unit: 'km/h · only where the GPS fix is steady', yMode: 'zero',
       data: [g.t, g.speed2d.map((v, i) => (v == null || !track.precise[i] ? null : v * MS_TO_KMH))],
       series: [{ label: 'Speed', stroke: C.speed, fill: 'rgba(76,194,255,.10)', width: 1.5 }],
-      fmt: (u, i) => `${padL((u.data[1][i] ?? 0).toFixed(1), 5)} km/h`,
+      fmt: (u, i) => `${fmtNum(u.data[1][i], 1, 5)} km/h`,
     },
     {
-      key: 'alt', title: 'Altitude', unit: 'm', yMode: 'auto',
-      data: [g.t, g.alt],
+      key: 'alt', title: 'Altitude', unit: 'm · only where the GPS had a fix', yMode: 'auto',
+      data: [g.t, g.alt.map((v, i) => (track.valid[i] ? v : null))],
       series: [{ label: 'Altitude', stroke: C.alt, fill: 'rgba(53,208,127,.10)', width: 1.5 }],
-      fmt: (u, i) => `${padL((u.data[1][i] ?? 0).toFixed(1), 7)} m`,
+      fmt: (u, i) => `${fmtNum(u.data[1][i], 1, 7)} m`,
     },
   ];
 }
@@ -62,7 +66,7 @@ function accelSpec(a) {
     key: 'accl', title: 'Accelerometer', unit: '|a| g', yMode: 'zero',
     data: [a.t, a.mag.map((v) => (v == null ? null : v / G))],
     series: [{ label: '|a|', stroke: C.mag, width: 1.5 }],
-    fmt: (u, i) => `|a| ${padL((u.data[1][i] ?? 0).toFixed(2), 5)} g`,
+    fmt: (u, i) => `|a| ${fmtNum(u.data[1][i], 2, 5)} g`,
   };
 }
 
@@ -108,6 +112,14 @@ export class Charts {
     this.plots = {};
     this.playheads = {};
     this.container.innerHTML = '';
+    this.container.style.gridTemplateRows = '';
+  }
+
+  /** No charts, and a line saying why. */
+  showEmpty(text) {
+    this.clear();
+    this.container.append(Object.assign(document.createElement('div'), { className: 'chart-empty', textContent: text }));
+    this.container.style.gridTemplateRows = '1fr';
   }
 
   /**
@@ -119,11 +131,7 @@ export class Charts {
     if (!track) return;
     this.chapterOffsets = (track.tel.chapters || []).map((c) => c.offsetSec).filter((o) => o > 0);
     const specs = chartSpecs(track, motion);
-    if (!specs.length) {
-      this.container.innerHTML = '<div class="chart-empty">No telemetry to chart for this recording.</div>';
-      this.container.style.gridTemplateRows = '1fr';
-      return;
-    }
+    if (!specs.length) { this.showEmpty('No telemetry to chart for this recording.'); return; }
     this.container.style.gridTemplateRows = `repeat(${specs.length}, minmax(110px, 1fr))`;
     const duration = Math.max(track.duration, 1);
     for (const spec of specs) this.#make(spec, duration);

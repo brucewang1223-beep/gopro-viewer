@@ -4,7 +4,8 @@ import path from 'node:path';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dateFolder, filesFor, oldestFirst, Importer } from '../server/importer.js';
 import { ImportLedger, importKey } from '../server/import-ledger.js';
-import { discoverCameraUrl, sizeOf } from '../server/gopro-camera.js';
+import { discoverCameraUrl } from '../server/gopro-camera.js';
+import { sizeOf } from '../server/fs-util.js';
 import { chooserArgs, chooserResult } from '../server/folder-picker.js';
 import { sampleCard, startFakeCamera } from './fake-camera.js';
 import { withTempDir } from './helpers.js';
@@ -170,10 +171,10 @@ test('a partial download is resumed with a Range request', async () => withTempD
 test('cancelling stops the transfer, keeps the partial file and leaves the ledger untouched', async () => withTempDir(async (dir) => {
   const { cam, ledger, importer, card, dest } = await setup(dir);
   try {
-    cam.setThrottle(25);          // 1 000 bytes every 25 ms: GX010004 (10 000 bytes) takes ~250 ms
+    cam.setStall(true);           // one chunk of GX010004 arrives, then the camera goes quiet: the cancel is what ends it
     const snap = await importer.snapshot();
     await importer.start({ dest, ...NEITHER, keys: keysOf(snap, ['GX010004.MP4', 'GX010005.MP4']) });
-    await wait(80);
+    while (!importer.job.items[0].bytes) await wait(10);
     assert.equal(importer.cancel(), true);
     const job = await finished(importer);
     assert.equal(job.state, 'cancelled');
@@ -185,7 +186,7 @@ test('cancelling stops the transfer, keeps the partial file and leaves the ledge
     assert.equal(importer.cancel(), false, 'nothing left to cancel');
     await assert.rejects(importer.deleteImported(keysOf(snap, ['GX010004.MP4'])), { status: 400 }, 'a cancelled clip is not deletable');
 
-    cam.setThrottle(0);
+    cam.setStall(false);
     await importer.start({ dest, ...NEITHER, keys: keysOf(snap, ['GX010004.MP4']) });
     const resumed = await finished(importer);
     assert.equal(resumed.state, 'done');
@@ -275,4 +276,110 @@ test('a corrupt ledger is refused rather than treated as empty', async () => wit
   const fresh = new ImportLedger(path.join(dir, 'missing.json'));
   await fresh.load();
   assert.equal(fresh.size, 0);
+}));
+
+test('two starts at once: the second is refused while the first is still listing the card', async () => withTempDir(async (dir) => {
+  const { cam, importer, dest } = await setup(dir);
+  try {
+    const snap = await importer.snapshot();
+    const keys = keysOf(snap, ['GX010004.MP4']);
+    const results = await Promise.allSettled([importer.start({ dest, ...NEITHER, keys }), importer.start({ dest, ...NEITHER, keys })]);
+    assert.deepEqual(results.map((r) => r.status), ['fulfilled', 'rejected']);
+    assert.equal(results[1].reason.status, 409);
+    const job = await finished(importer);
+    assert.equal(job.state, 'done');
+    assert.equal(cam.hits.filter((h) => h.path.endsWith('GX010004.MP4')).length, 1, 'the clip was fetched once');
+  } finally { await cam.close(); }
+}));
+
+test('a clip the camera lists but does not serve fails — it is neither ledgered nor offered for deletion', async () => withTempDir(async (dir) => {
+  const { cam, ledger, importer, card, dest } = await setup(dir);
+  try {
+    card.files.delete('GX010005.MP4');       // still in the media list, gone from the card
+    const snap = await importer.snapshot();
+    const keys = keysOf(snap, ['GX010004.MP4', 'GX010005.MP4']);
+    await importer.start({ dest, ...NEITHER, keys });
+    const job = await finished(importer);
+    assert.equal(job.state, 'failed');
+    const [gx4, gx5] = job.items;
+    assert.equal(gx4.status, 'done');
+    assert.equal(gx5.status, 'failed');
+    assert.match(gx5.error, /not served \(HTTP 404\)/);
+    assert.equal(ledger.size, 1, 'only the clip that arrived is remembered');
+    await assert.rejects(importer.deleteImported(keysOf(snap, ['GX010005.MP4'])), { status: 400 });
+    assert.equal((await importer.snapshot()).items.find((it) => it.name === 'GX010005.MP4').imported, null, 'and it is still new next time');
+  } finally { await cam.close(); }
+}));
+
+test('a card entry without a usable creation time is still listed and lands in an "undated" folder', async () => withTempDir(async (dir) => {
+  const card = sampleCard();
+  card.files.set('GX010009.MP4', Buffer.alloc(1_500, 7));
+  card.list.media[0].fs.push({ n: 'GX010009.MP4', s: '1500' });   // no cre, no glrv
+  const { cam, importer, dest } = await setup(dir, card);
+  try {
+    const snap = await importer.snapshot();
+    assert.ok(snap.camera, 'one odd entry does not hide the camera');
+    const odd = snap.items.find((it) => it.name === 'GX010009.MP4');
+    assert.equal(odd.date, 'undated');
+    assert.equal(dateFolder(NaN), 'undated');
+    assert.equal(dateFolder(0), 'undated');
+    await importer.start({ dest, ...NEITHER, keys: [odd.key] });
+    const job = await finished(importer);
+    assert.equal(job.state, 'done');
+    assert.equal(await sizeOf(path.join(dest, 'undated', 'GX010009.MP4')), 1_500);
+  } finally { await cam.close(); }
+}));
+
+test('a transfer that goes quiet is given up on and reported as a failure, not a cancel', async () => withTempDir(async (dir) => {
+  const cam = await startFakeCamera(sampleCard());
+  const importer = new Importer({ ledger: new ImportLedger(path.join(dir, 'ledger.json')), cameraUrl: cam.url, camera: { idleTimeoutMs: 150 } });
+  const dest = path.join(dir, 'footage');
+  try {
+    cam.setStall(true);
+    const snap = await importer.snapshot();
+    await importer.start({ dest, ...NEITHER, keys: keysOf(snap, ['GX010004.MP4']) });
+    const job = await finished(importer);
+    assert.equal(job.state, 'failed');
+    assert.equal(job.items[0].status, 'failed');
+    assert.match(job.items[0].error, /no data from the camera for 0.15 s/);
+    const part = await sizeOf(path.join(dest, '2026-09-05', 'GX010004.MP4.part'));
+    assert.ok(part > 0 && part < 10_000, `the bytes that did arrive are kept for a resume (${part})`);
+  } finally { await cam.close(); }
+}));
+
+test('deleting from the camera checks that the same camera is still the one connected', async () => withTempDir(async (dir) => {
+  const { cam, importer, dest } = await setup(dir);
+  try {
+    const snap = await importer.snapshot();
+    const keys = keysOf(snap, ['GX010004.MP4']);
+    await importer.start({ dest, ...NEITHER, keys });
+    await finished(importer);
+    const other = await startFakeCamera(sampleCard(), { serial: 'C9999999999999' });
+    importer.job.camera.baseUrl = other.url;   // the job's camera address now answers with another camera on it
+    await assert.rejects(importer.deleteImported(keys), { status: 409 });
+    assert.equal(other.hits.filter((h) => h.path.startsWith('/delete/')).length, 0, 'nothing was deleted from the other camera');
+    await other.close();
+    await cam.close();
+    await assert.rejects(importer.deleteImported(keys), { status: 503 }, 'no camera at all: not reachable');
+  } finally { await cam.close(); }
+}));
+
+test('a clip already on disk gets its stale .part removed, and a ledger write that fails leaves memory untouched', async () => withTempDir(async (dir) => {
+  const { cam, ledger, importer, card, dest } = await setup(dir);
+  try {
+    const folder = path.join(dest, '2026-09-05');
+    await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, 'GX010004.MP4'), card.files.get('GX010004.MP4'));
+    await writeFile(path.join(folder, 'GX010004.MP4.part'), 'leftover');
+    const snap = await importer.snapshot();
+    await importer.start({ dest, ...NEITHER, keys: keysOf(snap, ['GX010004.MP4']) });
+    const job = await finished(importer);
+    assert.equal(job.items[0].files[0].status, 'present');
+    assert.equal(await sizeOf(path.join(folder, 'GX010004.MP4.part')), 0, 'the leftover is gone');
+    assert.equal(ledger.size, 1);
+    await writeFile(path.join(dir, 'blocker'), 'a file where the ledger needs a directory');
+    ledger.file = path.join(dir, 'blocker', 'ledger.json');   // cannot be written
+    await assert.rejects(ledger.record('k', { name: 'x' }));
+    assert.equal(ledger.size, 1, 'the entry that could not be written is not remembered');
+  } finally { await cam.close(); }
 }));

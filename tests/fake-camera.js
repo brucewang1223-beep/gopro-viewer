@@ -1,6 +1,8 @@
 /**
  * A stand-in for the Open GoPro HTTP server of a camera on USB: media list, camera info, card
  * files with Range support and deletion, plus counters so tests can see what was requested.
+ * `setThrottle(ms)` dribbles files out 1 000 bytes at a time; `setStall(true)` sends one chunk
+ * and then nothing (a camera that fell asleep mid-transfer).
  */
 
 import http from 'node:http';
@@ -20,19 +22,22 @@ export function sampleCard() {
   return { files, list };
 }
 
-function serveFile(req, res, body, { throttleMs, hits }) {
+const CHUNK = 1000;
+
+function serveFile(req, res, body, state) {
   const range = /^bytes=(\d+)-$/.exec(req.headers.range ?? '');
   const from = range ? Number(range[1]) : 0;
-  hits.push({ path: req.url, range: req.headers.range ?? null });
+  state.hits.push({ path: req.url, range: req.headers.range ?? null });
   if (from >= body.length) { res.writeHead(416); return res.end(); }
   res.writeHead(range ? 206 : 200, { 'Content-Length': body.length - from, ...(range ? { 'Content-Range': `bytes ${from}-${body.length - 1}/${body.length}` } : {}) });
-  if (!throttleMs) return res.end(body.subarray(from));
+  if (state.stall) return res.write(body.subarray(from, from + CHUNK));   // one chunk, then silence until the client gives up
+  if (!state.throttleMs) return res.end(body.subarray(from));
   // dribble the file out so a test can cancel half-way
   let pos = from;
   const tick = () => {
     if (pos >= body.length) return res.end();
-    res.write(body.subarray(pos, pos + 1000)); pos += 1000;
-    return setTimeout(tick, throttleMs);
+    res.write(body.subarray(pos, pos + CHUNK)); pos += CHUNK;
+    return setTimeout(tick, state.throttleMs);
   };
   return tick();
 }
@@ -47,9 +52,9 @@ function deleteFile(path, res, { files, list, hits }) {
   return res.end('{}');
 }
 
-/** Starts the fake camera; resolves to { url, hits, close(), throttleMs }. */
+/** Starts the fake camera; resolves to { url, hits, setThrottle, setStall, close }. */
 export async function startFakeCamera({ files, list }, { serial = 'C3531325563165', model = 'HERO13 Black' } = {}) {
-  const state = { hits: [], throttleMs: 0 };
+  const state = { hits: [], throttleMs: 0, stall: false };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname === '/gopro/camera/control/wired_usb') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end('{}'); }
@@ -67,6 +72,7 @@ export async function startFakeCamera({ files, list }, { serial = 'C353132556316
     url: `http://127.0.0.1:${server.address().port}`,
     hits: state.hits,
     setThrottle: (ms) => { state.throttleMs = ms; },
+    setStall: (on) => { state.stall = on; },
     close: () => { server.closeAllConnections(); return new Promise((r) => server.close(r)); },
   };
 }

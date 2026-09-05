@@ -1,25 +1,27 @@
 /** Sidebar: media roots + recordings grouped by date. */
 
 import { api } from './api.js';
-import { el, fmtTime, fmtCameraTime, fmtBytes, describeSettings } from './util.js';
+import { el, fmtTime, fmtCameraTime, fmtBytes, describeSettings, shortPath } from './util.js';
 
 const badge = (text, cls = '', title = null) => el('span', { class: `badge ${cls}`.trim(), text, title });
+const call = (v, r) => (typeof v === 'function' ? v(r) : v);
 
-/** Telemetry / stabilisation / proxy / chapter badges of a recording. */
-function badgesFor(r) {
-  const badges = [];
-  // GPS badge only when the receiver actually had a fix; a GPS stream without lock is labelled NO FIX
-  if (r.hasGps && r.hasGpsFix) badges.push(badge('GPS', 'gps'));
-  else if (r.hasGps) badges.push(badge('NO FIX', 'nofix', 'GPS was on but never locked'));
-  if (r.hasImu) badges.push(badge('IMU', 'imu'));
-  if (!r.hasGps && !r.hasImu && r.hasGpmd) badges.push(badge('TELEMETRY'));
-  const stab = r.settings?.stabilization;
-  if (stab?.enabled) badges.push(badge('HS', 'hs', `HyperSmooth on (${stab.mode || 'EIS'})`));
-  else if (stab) badges.push(badge('HS OFF', 'hsoff', 'HyperSmooth (stabilisation) was off'));
-  if (r.hasProxy) badges.push(badge('LRV', 'proxy'));
-  if (r.chapters.length > 1) badges.push(badge(`${r.chapters.length} ch`));
-  return badges;
-}
+/**
+ * Badges of a recording: [applies(r), text, class, title]. The GPS badge only when the receiver
+ * actually had a fix; a GPS stream without lock is labelled NO FIX.
+ */
+const BADGE_RULES = [
+  [(r) => r.hasGps && r.hasGpsFix, 'GPS', 'gps'],
+  [(r) => r.hasGps && !r.hasGpsFix, 'NO FIX', 'nofix', 'GPS was on but never locked'],
+  [(r) => r.hasImu, 'IMU', 'imu'],
+  [(r) => !r.hasGps && !r.hasImu && r.hasGpmd, 'TELEMETRY'],
+  [(r) => r.settings?.stabilization?.enabled, 'HS', 'hs', (r) => `HyperSmooth on (${r.settings.stabilization.mode || 'EIS'})`],
+  [(r) => r.settings?.stabilization && !r.settings.stabilization.enabled, 'HS OFF', 'hsoff', 'HyperSmooth (stabilisation) was off'],
+  [(r) => r.hasProxy, 'LRV', 'proxy'],
+  [(r) => r.chapters.length > 1, (r) => `${r.chapters.length} ch`],
+];
+
+const badgesFor = (r) => BADGE_RULES.filter(([applies]) => applies(r)).map(([, text, cls, title]) => badge(call(text, r), cls, call(title, r)));
 
 function thumbnail(r) {
   if (r.thumbId) return el('img', { class: 'rec-thumb', src: api.thumbUrl(r.thumbId), alt: '', loading: 'lazy' });
@@ -28,15 +30,11 @@ function thumbnail(r) {
 
 function tooltip(r) {
   const settings = describeSettings(r.settings).map(([k, v]) => `${k}: ${v}`).join('\n');
-  return `${r.dir}\n${r.chapters.map((c) => c.file).join(', ')}${settings ? `\n\n${settings}` : ''}`;
+  const start = r.startTimeUtc ? `\nStart: ${fmtCameraTime(r.startTime)} camera time · ${fmtCameraTime(r.startTimeUtc)} UTC` : '';
+  return `${r.dir}\n${r.chapters.map((c) => c.file).join(', ')}${start}${settings ? `\n\n${settings}` : ''}`;
 }
 
 const searchText = (r) => `${r.name} ${r.dir} ${r.startTime || ''} ${r.chapters.map((c) => c.file).join(' ')}`.toLowerCase();
-
-const shortPath = (p) => {
-  const parts = p.split('/').filter(Boolean);
-  return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : p;
-};
 
 export class LibraryView {
   /**
@@ -83,8 +81,10 @@ export class LibraryView {
     return this.filter ? 'No recordings match the filter.' : 'No GoPro videos found in the configured folders.';
   }
 
+  /** A configured folder; one the last scan could not find on disk is struck through. */
   #rootRow(r) {
-    return el('div', { class: 'root', title: r.path }, [
+    const missing = r.exists === false;
+    return el('div', { class: `root${missing ? ' missing' : ''}`, title: missing ? `${r.path} — folder not found on disk` : r.path }, [
       el('span', { text: shortPath(r.path) }),
       el('button', { type: 'button', title: 'Remove this folder from the library', onclick: () => this.h.onRemoveRoot(r.id) }, '✕'),
     ]);

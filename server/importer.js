@@ -11,9 +11,11 @@
  */
 
 import path from 'node:path';
-import { mkdir } from 'node:fs/promises';
-import { GoProCamera, discoverCameraUrl, sizeOf } from './gopro-camera.js';
+import { mkdir, rm } from 'node:fs/promises';
+import { GoProCamera, discoverCameraUrl } from './gopro-camera.js';
 import { importKey } from './import-ledger.js';
+import { httpError } from './http-error.js';
+import { sizeOf } from './fs-util.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
 
@@ -21,12 +23,12 @@ const log = createLogger('import');
 const RATE_WINDOW_MS = 5000;
 const RATE_SAMPLE_MS = 200;
 
-const httpError = (status, message) => Object.assign(new Error(message), { status });
 const isMp4 = (name) => /\.mp4$/i.test(name);
 const stem = (name) => name.replace(/\.[^.]+$/, '');
 
 /** Folder name of a clip. The camera clock stores local time as if it were UTC, so UTC getters give the local date. */
 export function dateFolder(creEpochSec) {
+  if (!(creEpochSec > 0)) return 'undated';   // an entry without a usable creation time still imports, into its own folder
   return new Date(creEpochSec * 1000).toISOString().slice(0, 10);
 }
 
@@ -109,18 +111,22 @@ class ImportJob {
       await ledger.record(item.key, this.#ledgerEntry(item, folder));
       item.status = 'done';
     } catch (e) {
-      item.status = e.name === 'AbortError' ? 'cancelled' : 'failed';
+      item.status = this.abort.signal.aborted ? 'cancelled' : 'failed';   // a stalled transfer is a failure, a Stop is not
       item.error = item.status === 'failed' ? e.message : null;
       if (item.status === 'failed') log.warn(`import of ${item.name} failed: ${e.message}`);
     }
   }
 
-  /** One card file into `folder`: verified as present, downloaded (resuming a `.part`), or absent on the camera. */
+  /**
+   * One card file into `folder`: verified as present, downloaded (resuming a `.part`), or absent
+   * on the camera — which is fine for a sidecar and fails the clip when it is the clip itself.
+   */
   async #fetchFile(item, file, folder) {
     const dest = path.join(folder, file.name);
     const onDisk = await sizeOf(dest);
     if (onDisk > 0 && (file.size == null || onDisk === file.size)) {
       file.status = 'present';
+      await rm(`${dest}.part`, { force: true });   // a leftover from an earlier attempt has nothing to add
       this.#advance(item, file.size ?? 0);
       return;
     }
@@ -128,8 +134,12 @@ class ImportJob {
     let last = 0;
     const onProgress = (n) => { this.#advance(item, n - last); last = n; };
     const got = await this.camera.download(item.dir, file.name, dest, { expectedSize: file.size, onProgress, signal: this.abort.signal });
-    if (got == null) { file.status = 'absent'; this.totalBytes -= file.size ?? 0; return; } // listed or expected, yet not served
-    if (file.size == null) this.totalBytes += got;                                          // a thumbnail: counted once its size is known
+    if (got == null) {
+      if (file.kind === 'main') throw new Error(`${file.name}: listed by the camera but not served (HTTP 404)`);
+      file.status = 'absent'; this.totalBytes -= file.size ?? 0;   // listed or expected, yet not served
+      return;
+    }
+    if (file.size == null) this.totalBytes += got;                  // a thumbnail: counted once its size is known
     file.status = 'done';
   }
 
@@ -178,14 +188,17 @@ class ImportJob {
 
 export class Importer {
   /**
-   * @param {{ ledger: import('./import-ledger.js').ImportLedger, cameraUrl?: string|null, discover?: () => string|null }} opts
+   * @param {{ ledger: import('./import-ledger.js').ImportLedger, cameraUrl?: string|null, discover?: () => string|null, camera?: object }} opts
    *   cameraUrl pins the camera (tests, unusual setups); otherwise the USB network is probed on every snapshot.
+   *   camera: options for the GoProCamera client (idleTimeoutMs).
    */
-  constructor({ ledger, cameraUrl = null, discover = discoverCameraUrl }) {
+  constructor({ ledger, cameraUrl = null, discover = discoverCameraUrl, camera = {} }) {
     this.ledger = ledger;
     this.cameraUrl = cameraUrl || null;
     this.discover = discover;
+    this.cameraOptions = camera;
     this.job = null;
+    this.starting = false;    // a start() is between its checks and its job: a second one is refused meanwhile
     this.onFinished = null;   // async (job) => void, set by the app (rescan, add the destination as a media root)
   }
 
@@ -203,20 +216,31 @@ export class Importer {
 
   /** Starts a job for the given keys (from a snapshot); throws 400/409/503 errors the HTTP layer forwards. */
   async start({ dest, keys, lrv, thm }) {
-    if (this.job?.running) throw httpError(409, 'an import is already running');
+    if (this.job?.running || this.starting) throw httpError(409, 'an import is already running');
     if (!isBool(lrv) || !isBool(thm)) throw httpError(400, 'lrv and thm must be true or false');
     if (typeof dest !== 'string' || !path.isAbsolute(dest)) throw httpError(400, 'destination must be an absolute path');
     if (!Array.isArray(keys) || !keys.length) throw httpError(400, 'nothing to import');
+    this.starting = true;
+    try {
+      const job = await this.#prepare({ dest: path.resolve(dest), keys, options: { lrv, thm } });
+      this.job = job;
+      log.info(`import started: ${job.items.length} clips, ${job.totalBytes} bytes, lrv=${lrv} thm=${thm} → ${job.dest}`);
+      job.run(this.ledger).then(() => this.onFinished?.(job)).catch((e) => log.error('import job crashed', e));
+      return job.toJSON();
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  /** The job for a validated request: the card is listed, the keys resolved, the destination created. */
+  async #prepare({ dest, keys, options }) {
     await this.ledger.load();
     const source = await this.#source().catch((e) => { throw httpError(503, `camera not reachable: ${e.message}`); });
     const wanted = new Set(keys);
     const items = oldestFirst(source.items).map((it) => this.#describe(source.info.serial, it)).filter((it) => wanted.has(it.key));
     if (!items.length) throw httpError(400, 'none of the requested files is on the camera');
-    await mkdir(path.resolve(dest), { recursive: true });
-    this.job = new ImportJob({ dest: path.resolve(dest), options: { lrv, thm }, items, camera: source.camera, info: source.info });
-    log.info(`import started: ${items.length} clips, ${this.job.totalBytes} bytes, lrv=${lrv} thm=${thm} → ${this.job.dest}`);
-    this.job.run(this.ledger).then(() => this.onFinished?.(this.job)).catch((e) => log.error('import job crashed', e));
-    return this.job.toJSON();
+    await mkdir(dest, { recursive: true });
+    return new ImportJob({ dest, options, items, camera: source.camera, info: source.info });
   }
 
   cancel() {
@@ -225,12 +249,17 @@ export class Importer {
     return true;
   }
 
-  /** Deletes clips of the last job from the camera; only clips that job imported completely are accepted. */
+  /**
+   * Deletes clips of the last job from the camera; only clips that job imported completely are
+   * accepted, and only while the camera the job read them from is the one connected.
+   */
   async deleteImported(keys) {
     if (!this.job || this.job.running) throw httpError(409, 'no finished import to delete from');
     if (!Array.isArray(keys) || !keys.length) throw httpError(400, 'nothing to delete');
     const allowed = new Set(this.job.deletable().map((it) => it.key));
     if (!keys.every((k) => allowed.has(k))) throw httpError(400, 'only clips the last import brought in completely can be deleted from the camera');
+    const { serial } = await this.job.camera.connect().catch((e) => { throw httpError(503, `camera not reachable: ${e.message}`); });
+    if (serial !== this.job.info.serial) throw httpError(409, `a different camera is connected (serial ${serial})`);
     await this.job.deleteFromCamera(keys);
     return this.job.toJSON();
   }
@@ -238,7 +267,7 @@ export class Importer {
   async #source() {
     const url = this.cameraUrl ?? this.discover();
     if (!url) throw new Error('no GoPro on USB — connect the camera in GoPro Connect mode');
-    const camera = new GoProCamera(url);
+    const camera = new GoProCamera(url, this.cameraOptions);
     const info = await camera.connect();
     return { camera, info, items: await camera.mediaList() };
   }

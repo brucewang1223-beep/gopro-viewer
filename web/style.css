@@ -53,6 +53,7 @@ input[type="text"]:focus, input[type="search"]:focus { border-color: var(--accen
 .roots { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); }
 .root { display: flex; align-items: center; gap: 6px; }
 .root span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-family: var(--mono); }
+.root.missing span { color: var(--bad); text-decoration: line-through; text-decoration-color: rgba(255,92,92,.7); }
 .root button { background: none; border: none; color: var(--muted); cursor: pointer; padding: 0 4px; }
 .root button:hover { color: var(--bad); }
 .library { overflow-y: auto; flex: 1; padding: 6px; }
@@ -75,6 +76,7 @@ input[type="text"]:focus, input[type="search"]:focus { border-color: var(--accen
 
 /* ---------- main ---------- */
 .main { grid-area: main; display: grid; grid-template-rows: minmax(260px, 48vh) auto auto minmax(0, 1fr); min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; }
+.main > * { min-width: 0; } /* a grid item defaults to min-width: auto — the charts' pixel width would then hold the window open after a shrink */
 .stage { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); min-height: 0; border-bottom: 1px solid var(--border); }
 .video-wrap { position: relative; background: #000; min-height: 0; display: flex; align-items: center; justify-content: center; }
 video { width: 100%; height: 100%; object-fit: contain; background: #000; }
@@ -106,7 +108,7 @@ video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .ctl select { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
 .toggle input { accent-color: var(--accent); }
 .links { gap: 4px; }
-.export a.disabled { pointer-events: none; opacity: .4; }
+.export a:not([href]) { pointer-events: none; opacity: .4; } /* no recording selected: nothing to download, nothing to focus */
 
 /* timeline */
 .timeline-wrap { height: 42px; background: var(--panel); border-bottom: 1px solid var(--border); padding: 4px 10px; }
@@ -115,7 +117,7 @@ video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 /* charts */
 .charts { display: grid; grid-template-rows: repeat(3, minmax(110px, 1fr)); min-height: 0; padding: 4px 10px 8px; gap: 4px; }
 .chart-empty { color: var(--muted); display: flex; align-items: center; justify-content: center; }
-.chart { position: relative; min-height: 0; display: flex; flex-direction: column; }
+.chart { position: relative; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .chart-title { font-size: 11px; color: var(--muted); padding: 2px 0 0 2px; text-transform: uppercase; letter-spacing: .5px; }
 .chart-title small { text-transform: none; letter-spacing: 0; color: var(--muted); opacity: .8; }
 .chart-body { flex: 1; min-height: 0; position: relative; }

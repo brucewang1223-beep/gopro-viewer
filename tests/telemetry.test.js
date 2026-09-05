@@ -203,3 +203,28 @@ test('mergeChapters with a chapter lacking telemetry keeps warnings', () => {
   assert.deepEqual(merged.warnings, ['a.MP4: no GPMF track in file']);
   assert.equal(merged.stats.validPoints, 0);
 });
+
+test('mergeChapters survives a chapter with 200 000 IMU rows (no spread into push)', () => {
+  const n = 200_000;
+  const col = () => new Array(n).fill(0);
+  const accl = { hz: 200, n, frame: 'camera', orientation: null, t: Array.from({ length: n }, (_, i) => i / 200), x: col(), y: col(), z: col(), mag: col(), magMax: col() };
+  const rec = { id: 'r', name: 'X', chapters: [{ id: 'a', file: 'a.MP4', index: 0, offsetSec: 0, durationSec: 1000 }], durationSec: 1000, startTime: null };
+  const merged = mergeChapters(rec, [{ chapter: rec.chapters[0], data: { gps: null, accl, gyro: null, warnings: [], camera: {} } }]);
+  assert.equal(merged.accl.n, n);
+});
+
+test('mergeChapters keeps firmware and lens from a chapter whose telemetry named no model', () => {
+  const rec = { id: 'r', name: 'X', chapters: [{ id: 'a', file: 'a.MP4', index: 0, offsetSec: 0, durationSec: 5 }, { id: 'b', file: 'b.MP4', index: 1, offsetSec: 5, durationSec: 5 }], durationSec: 10, startTime: null };
+  const items = [
+    { chapter: rec.chapters[0], data: { gps: null, accl: null, gyro: null, warnings: ['telemetry decode failed: x'], camera: { model: null, firmware: 'H24.01.02.10.00', lens: 'LAJ…' } } },
+    { chapter: rec.chapters[1], data: { gps: null, accl: null, gyro: null, warnings: [], camera: { model: 'HERO13 Black', firmware: 'H24.01.02.10.00', lens: null } } },
+  ];
+  assert.deepEqual(mergeChapters(rec, items).camera, { model: 'HERO13 Black', firmware: 'H24.01.02.10.00', lens: null }, 'the chapter that names the model wins');
+  assert.deepEqual(mergeChapters(rec, items.slice(0, 1)).camera, { model: null, firmware: 'H24.01.02.10.00', lens: 'LAJ…' }, 'with no model anywhere the header fields still come through');
+});
+
+test('cameraFrameMapping falls back to the default when an axis is named twice', () => {
+  assert.equal(cameraFrameMapping({ orin: 'XXY' }).source, 'default');
+  assert.equal(cameraFrameMapping({ orin: 'ZXY', orio: 'zzz' }).source, 'default');
+  assert.equal(cameraFrameMapping({ orin: 'ZXY', orio: 'YXZ' }).source, 'ORIO');
+});

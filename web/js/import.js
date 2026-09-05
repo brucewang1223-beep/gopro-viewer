@@ -9,19 +9,17 @@
  */
 
 import { api } from './api.js';
-import { el, fmtBytes, fmtTime } from './util.js';
+import { $, el, fmtBytes, fmtTime, fmtClock, fmtCameraEpoch, shortPath } from './util.js';
 
 const POLL_MS = 1000;
-const $ = (id) => document.getElementById(id);
+const POLL_MISSES = 5;   // consecutive failed polls before the job is given up on (a server restart, say)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const isMp4 = (name) => /\.mp4$/i.test(name);
 const itemBytes = (item, { lrv }) => item.size + (lrv && isMp4(item.name) ? item.lrvSize : 0);
 const sum = (items, f) => items.reduce((n, it) => n + f(it), 0);
 const clips = (n) => `${n} clip${n === 1 ? '' : 's'}`;
-/** Camera clock (local time stored as UTC) → "2026-09-05 08:48". */
-const fmtRecorded = (creEpochSec) => new Date(creEpochSec * 1000).toISOString().replace('T', ' ').slice(0, 16);
-const shortDir = (p) => { const parts = p.split('/').filter(Boolean); return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : p; };
+const running = (job) => job?.state === 'running';
 const chip = (text) => el('span', { class: 'badge', text });
 const NO_CAMERA_HINT = 'Connect the GoPro by USB with its USB connection set to GoPro Connect (Preferences › Connections), wake it up, then choose “Look again”.';
 
@@ -39,8 +37,8 @@ function jobStatus(it) {
 /** Status cell of a clip as listed on the card. */
 function cardStatus(it) {
   if (!it.imported) return { text: 'new', cls: 'new' };
-  const when = it.imported.at.slice(0, 16).replace('T', ' ');
-  return { text: `imported ${when.slice(0, 10)} → ${shortDir(it.imported.dest)}`, cls: 'muted', title: `Imported ${when} into ${it.imported.dest}\nTick to import it again.` };
+  const when = fmtClock(Date.parse(it.imported.at), { utc: false, withDate: true }).slice(0, 16);   // the import happened here: local time
+  return { text: `imported ${when.slice(0, 10)} → ${shortPath(it.imported.dest)}`, cls: 'muted', title: `Imported ${when} into ${it.imported.dest}\nTick to import it again.` };
 }
 
 /** Clips a finished job brought in completely and has not deleted from the camera yet. */
@@ -90,7 +88,7 @@ export class ImportDialog {
 
   /** Sidecar choices as ticked in the dialog. */
   get options() { return { lrv: $('import-lrv').checked, thm: $('import-thm').checked }; }
-  get busy() { return this.job?.state === 'running'; }
+  get busy() { return running(this.job); }
   /** Inputs are frozen while a job runs and while its result is on screen — "Look again" starts afresh. */
   get locked() { return !!this.job; }
 
@@ -103,7 +101,7 @@ export class ImportDialog {
   /** Picks up a job that was already running (page reload) so the status bar keeps following it. */
   async watch() {
     const job = await api.importJob().catch(() => null);
-    if (job?.state === 'running') { this.job = job; this.#poll(); }
+    if (running(job)) { this.job = job; this.#poll(); }
   }
 
   async #refresh() {
@@ -118,7 +116,7 @@ export class ImportDialog {
     }
     this.#applyDefaults(this.snap.defaults ?? {});
     this.selected = new Set(this.snap.items.filter((it) => !it.imported).map((it) => it.key));
-    if (this.snap.job?.state === 'running') { this.job = this.snap.job; this.#poll(); }
+    if (running(this.snap.job)) { this.job = this.snap.job; this.#poll(); }
     this.#render();
   }
 
@@ -205,7 +203,7 @@ export class ImportDialog {
     return el('label', { class: `import-row${it.imported ? ' imported' : ''}` }, [
       box,
       el('span', { class: 'import-name' }, [el('b', { text: it.name }), ...chips]),
-      el('span', { class: 'import-when', text: fmtRecorded(it.cre) }),
+      el('span', { class: 'import-when', text: fmtCameraEpoch(it.cre) }),
       el('span', { class: 'import-size', text: fmtBytes(itemBytes(it, { lrv })) }),
       cell,
     ]);
@@ -235,7 +233,7 @@ export class ImportDialog {
   /** The question that follows a finished import: delete what it brought in from the camera? */
   #renderPrompt() {
     const job = this.job;
-    const pending = job && !job.running && !this.asked ? deletable(job) : [];
+    const pending = job && !running(job) && !this.asked ? deletable(job) : [];
     $('import-prompt').classList.toggle('hidden', !pending.length);
     if (!pending.length) return;
     $('import-prompt-text').textContent = `${clips(pending.length)} (${fmtBytes(sum(pending, (it) => it.total))}) ${pending.length === 1 ? 'is' : 'are'} now safely on disk. Delete ${pending.length === 1 ? 'it' : 'them'} from the camera to free the card?`;
@@ -257,19 +255,23 @@ export class ImportDialog {
     }
   }
 
+  /** Follows the running job once a second; a few failed polls are tolerated, then the job is let go so the dialog is usable again. */
   async #poll() {
     if (this.polling) return;
     this.polling = true;
+    let misses = 0;
     try {
-      while (this.job?.state === 'running') {
+      while (running(this.job)) {
         await sleep(POLL_MS);
-        this.job = (await api.importJob()) ?? this.job;
+        try { this.job = (await api.importJob()) ?? this.job; misses = 0; } catch (e) { if (++misses >= POLL_MISSES) throw e; continue; }
         if (this.dialog.open) this.#render();
         this.h.onProgress(this.job);
       }
       if (this.job) this.#finish(this.job);
     } catch (e) {
       this.h.toast(`Lost track of the import: ${e.message}`, 'error', 8000);
+      this.job = null;
+      this.#render();
     } finally {
       this.polling = false;
     }

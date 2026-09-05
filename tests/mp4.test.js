@@ -63,3 +63,34 @@ test('probeGpsFix distinguishes a locked receiver from a searching one', async (
 test('non-MP4 input raises Mp4Error', async () => {
   await assert.rejects(readMp4Info(path.resolve('package.json')), (e) => e instanceof Mp4Error);
 });
+
+/** A copy of the Hero6 fixture with one 32-bit field of its gpmd track patched. */
+async function patchedFixture(dir, name, match, value) {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const buf = Buffer.from(await readFile(FIX.gx01));
+  const moovEnd = buf.length;   // the whole file is small: search the lot
+  let at = -1;
+  for (let off = 0; off + 4 <= moovEnd; off++) {
+    if (buf.toString('latin1', off, off + 4) === match.box) { at = off; break; }
+  }
+  assert.ok(at > 0, `${match.box} box found`);
+  const target = path.join(dir, name);
+  buf.writeUInt32BE(value, at + match.offset);
+  await writeFile(target, buf);
+  return target;
+}
+
+test('corrupt sample tables are refused with an Mp4Error instead of a crash or a huge allocation', async () => {
+  const { withTempDir } = await import('./helpers.js');
+  await withTempDir(async (dir) => {
+    // the first stts in the file belongs to the video track: 4 (type) + 4 (version/flags) → entry count
+    const stts = await patchedFixture(dir, 'stts.MP4', { box: 'stts', offset: 8 }, 0x7fffffff);
+    await assert.rejects(readMp4Info(stts), (e) => e instanceof Mp4Error && /Corrupt 'stts' table/.test(e.message));
+    // stsz: 4 (type) + 4 (version/flags) + 4 (sample_size) → sample count
+    const stsz = await patchedFixture(dir, 'stsz.MP4', { box: 'stsz', offset: 12 }, 0x3fffffff);
+    await assert.rejects(readMp4Info(stsz), (e) => e instanceof Mp4Error && /Corrupt 'stsz' table/.test(e.message));
+    // mvhd: 4 (type) + 4 (version/flags) + 4 + 4 (creation, modification) → timescale
+    const mvhd = await patchedFixture(dir, 'mvhd.MP4', { box: 'mvhd', offset: 16 }, 0);
+    await assert.rejects(readMp4Info(mvhd), (e) => e instanceof Mp4Error && /timescale/.test(e.message));
+  });
+});

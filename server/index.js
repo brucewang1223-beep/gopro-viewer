@@ -36,6 +36,9 @@ async function main() {
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  // a bug that escapes every handler ends the process with a readable line (launchd restarts it), not a bare stack
+  process.on('uncaughtException', (e) => { log.error('uncaught exception — exiting', e); process.exit(1); });
+  process.on('unhandledRejection', (e) => { log.error('unhandled rejection — exiting', e); process.exit(1); });
 }
 
 main().catch((e) => {

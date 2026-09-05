@@ -124,13 +124,14 @@ export class BasemapControl {
   #open(open) {
     this.panel.hidden = !open;
     this.container.classList.toggle('is-open', open);
+    this.toggleButton.setAttribute('aria-expanded', String(open));
   }
 
   /** Reflect the current basemap / labels state in the cards. */
   #sync() {
     this.toggleButton.innerHTML = `<span class="basemap-thumb">${THUMBS[this.active] ?? ''}</span>`
       + `<span class="basemap-name">${this.basemaps[this.active]?.label ?? ''}</span>`;
-    for (const [key, card] of this.cards ?? []) card.classList.toggle('is-active', key === this.active);
+    for (const [key, card] of this.cards ?? []) { card.classList.toggle('is-active', key === this.active); card.setAttribute('aria-pressed', String(key === this.active)); }
     this.chip?.classList.toggle('is-on', this.labels);
     this.chip?.setAttribute('aria-checked', String(this.labels));
   }

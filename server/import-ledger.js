@@ -9,8 +9,8 @@
  * name after a card format does not.
  */
 
-import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
-import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { writeJsonAtomic } from './fs-util.js';
 import { shortId } from './ids.js';
 
 const VERSION = 1;
@@ -41,12 +41,10 @@ export class ImportLedger {
 
   get size() { return this.entries.size; }
 
-  /** Records an import and writes the ledger atomically (temp file + rename). */
+  /** Records an import: the file is written first (atomically), so memory never claims what disk does not hold. */
   async record(key, entry) {
-    this.entries.set(key, entry);
-    const tmp = `${this.file}.tmp`;
-    await mkdir(path.dirname(this.file), { recursive: true });
-    await writeFile(tmp, JSON.stringify({ v: VERSION, entries: Object.fromEntries(this.entries) }, null, 2) + '\n', 'utf8');
-    await rename(tmp, this.file);
+    const entries = new Map(this.entries).set(key, entry);
+    await writeJsonAtomic(this.file, { v: VERSION, entries: Object.fromEntries(entries) }, { pretty: true });
+    this.entries = entries;
   }
 }

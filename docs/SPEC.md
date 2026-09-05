@@ -1,6 +1,6 @@
-# GoPro Viewer — Specification (v0.1)
+# GoPro Viewer — Specification
 
-Status: implemented (v0.3.0 — import from the camera over USB). This document is the single source of truth for scope,
+Status: implemented (v1.0.0 — the reviewed, hardened release). This document is the single source of truth for scope,
 architecture, data contracts and acceptance criteria. Change the spec first, then the code.
 
 ## 1. Purpose
@@ -25,17 +25,17 @@ speed" matters. Secondary use: exporting the telemetry (GPX / CSV) for offline a
 | Telemetry | Extract the `gpmd` track without reading the media payload; decode with `gopro-telemetry`; normalise into columnar arrays on a global time base; cache per chapter on disk. GPS5 (HERO5–10) and GPS9 (HERO11+) supported, GPS9 preferred. |
 | Sync | Map marker (with heading), HUD (speed, altitude, lat/lon, fix quality/DOP, UTC + local clock, |a|), chart playheads and timeline follow the video within one frame; seeking from map / charts / timeline / keyboard. |
 | Map | MapLibre GL with two basemaps in the K2 styles, from a data provider chosen in `config.json` (`map.provider`): **`osm`** (the default) draws the same styles on OpenStreetMap data — OpenFreeMap vector tiles (OpenMapTiles schema, world-wide to z14, no key or quota, fetched by the browser) for the map and the label overlay, Esri World Imagery for the satellite view (world-wide to z19) — from `web/styles/osm-*.json`, derived from the K2 styles by `scripts/make-osm-styles.js` (sources, glyphs and two layers OpenFreeMap has no data for are the only differences; road shields, colours and fonts are identical). **`k2`** keeps the original basemaps of `map.lumobility.com`, rendered from the same two styles that service publishes: **Map** (K2 Mapbox Streets Match — UAE vector to z14 over a world vector base to z7, road shields drawn on a canvas at style load because K2 ships no sprite) and **Satellite** (K2 Satellite Hybrid — UAE imagery to z19 over world imagery to z12, with a Labels chip that hides the label layers). The switcher sits bottom-left as two preview cards, mirroring K2's own picker; key `B` cycles it; the choice is remembered in `localStorage` and `config.json` only supplies the first-run default. Tiles and glyphs are fetched through `/api/map*` so the token stays server-side (§4.5). On selection the whole route is fitted and centred. Route drawn in two colours — travelled (accent) vs remaining (grey) — updated as playback advances; optional speed colouring (remaining part dimmed). Prominent pulsing position marker with heading. Map stays freely zoomable; "fit whole route" and "centre on position" buttons top-left (also key `F`); follow mode. Only samples the receiver actually fixed are drawn: a lost fix ends the line rather than being bridged, and the position marker is hidden while there is no fix instead of holding a stale position. |
-| Charts | Speed (km/h — drawn only where the GPS fix is steady, see the speed rule in §4.2; elsewhere the line breaks), altitude (m), G-force (longitudinal / lateral / vertical g), gyro rates (yaw / pitch / roll °/s); the chart set adapts to the data available; shared cursor and zoom; chapter boundaries marked. |
+| Charts | Speed (km/h — drawn only where the GPS fix is steady, see the speed rule in §4.2; elsewhere the line breaks), altitude (m — drawn only where the receiver had a position, a searching receiver writes 10 000 m), G-force (longitudinal / lateral / vertical g), gyro rates (yaw / pitch / roll °/s, a gap where the gyro had one); the chart set adapts to the data available; shared cursor and zoom; chapter boundaries marked. The charts follow the window: a smaller window shrinks them (grid items are given `min-width: 0`, or uPlot's pixel width would hold the layout open). |
 | Gauges | Instrument cluster centred at the top of the video: G-force ball (friction circle, 0.5 g / 1 g rings, trail), gyro ball (yaw ↔, pitch ↕, roll-rate arc at the rim) and attitude bubble level (pitch / roll from the measured gravity direction). Toggle with `G`. |
 | Audio | Always muted by design (`<video muted>` and enforced in code); no volume UI. Muted playback also avoids browser autoplay restrictions. |
 | GPS status strip | A bar along the bottom of the timeline shows the receiver's status over the whole recording, in the HUD's colours: red = no fix (nothing drawn on the map there), amber = 2D fix, green = 3D fix. The recording is bucketed into 600 columns and each column takes the status most of its samples reported (ties go to the worse one). The `Fix 3D / 2D / none` counts in the stats bar carry the same three colours and double as the legend. |
 | Timeline alignment | The timeline bar's drawn extent is inset to the charts' plot area (measured after uPlot's ready/setSize hooks, so it tracks resizes), so its playhead and the chart playheads share the same x position. |
 | Skip step | ← / → and the −/+ buttons take a user-selectable step: whole video frames (1, 2, 5, 10) or seconds (1, 2, 3, 5, 10, 15, 30, 60); Shift multiplies by 6. A frame step pauses playback and is computed on the chapter's own frame grid (`fps` from the chapter, target = middle of the frame, so repeated steps cannot drift). The choice is persisted in `localStorage` as `2f` / `5s`; a bare number left by an earlier version reads as seconds. `,` / `.` always step one frame regardless of the selector. |
 | Layout stability | Every live readout (HUD cells, gauge captions, time display, chart hover readouts) is written at a constant character width in a monospace font with tabular numerals and `white-space: pre`, so nothing reflows or jitters during playback. |
-| Stats | Distance, max/avg speed and moving time (from trustworthy speed samples only — see the speed rule in §4.2), elevation gain/loss, fix-quality histogram, camera model/firmware, UTC start. |
-| Export | GPX 1.1 (fixed points only, with ele/time/speed), GeoJSON and CSV (GPS, accelerometer, gyroscope). GeoJSON is a `FeatureCollection` of `LineString` features, one per contiguous run of positioned samples (split on lost fix or a gap > 5 s), positions as `[lon, lat, alt]`, per-run stats + camera/settings in `properties`, per-point `times`/`speeds` in `properties.coordinateProperties` (the togeojson convention). CLI `scripts/dump-telemetry.js` for headless extraction. |
+| Stats | Distance (summed run by run, never across a stretch the receiver could not position), max/avg speed and moving time (from trustworthy speed samples only — see the speed rule in §4.2), elevation gain/loss (3D fixes only), fix-quality histogram, camera model/firmware, UTC start. |
+| Export | GPX 1.1 (fixed points only, one `<trkseg>` per run, with ele/time/speed), GeoJSON and CSV (GPS, accelerometer, gyroscope). GeoJSON is a `FeatureCollection` of `LineString` features, one per contiguous run of positioned samples (split on lost fix or a gap > 5 s), positions as `[lon, lat, alt]`, per-run stats (max/avg speed under the speed rule, like the stats bar) + camera/settings in `properties`, per-point `times`/`speeds` (the camera's own, unfiltered) in `properties.coordinateProperties` (the togeojson convention). Download names are sent RFC 5987-encoded, so a recording named in any script exports. CLI `scripts/dump-telemetry.js` for headless extraction in every format. |
 | Import | Copy clips from the GoPro connected by USB (GoPro Connect / NCM mode, Open GoPro HTTP API — see §4.6) into a destination folder picked per import in the Mac's own folder panel (opened by the server with `osascript`, never typed), filed under `<destination>/<YYYY-MM-DD>/` by the camera's recording date. Every card entry is listed; with each MP4 the **LRV proxy** (ticked by default) and the **THM thumbnail** (unticked by default) come along when ticked, and the choices are remembered. When a job ends the dialog asks whether the clips it brought in completely should be **deleted from the camera** (MP4, then LRV and THM best-effort, via `/gopro/media/delete/file`); only those clips can be deleted, one time, and "Keep on camera" leaves them. A ledger of everything ever imported (`import-ledger.json`, outside `.cache/`) decides what is ticked by default: a clip imported before — whether or not its local copy still exists — is listed unticked and labelled with when and where it went, and is only imported again when the user ticks it by hand. One job at a time, sequential downloads, HTTP Range resume of a `.part` left by a stopped or failed transfer, byte-count verification, a file already complete at the destination is verified rather than fetched, the ledger is written after every completed clip, and the destination is added as a media root (unless one already covers it) so the imported footage appears in the library. |
-| Config | Media roots via UI (persisted to `config.json`), CLI flags, environment variables. Server binds 127.0.0.1 by default. |
+| Config | Media roots via UI (persisted to `config.json`), CLI flags, environment variables. Server binds 127.0.0.1 by default and, on a loopback address, answers only requests whose `Host` header names localhost (a page that resolves its own name to 127.0.0.1 cannot drive the API). A root the last scan could not find on disk is listed struck through. |
 | Desktop use | `web/manifest.webmanifest` + icons make the page installable as a Chrome app (own window, Dock icon); `scripts/macos-launch-agent.sh` (`npm run autostart`) starts the server at login via launchd. |
 
 ### Out of scope (v0.1)
@@ -62,8 +62,8 @@ highlight tags (HLMT), sensor streams other than GPS/ACCL/GYRO (available in
 │ telemetry.js (pipeline, cache)  export.js (GPX/GeoJSON/CSV)     │
 │ importer.js (plan + job)  gopro-camera.js (Open GoPro client)   │
 │ import-ledger.js  folder-picker.js (macOS panel)  geo.js         │
-│ config.js                                                        │
-│ json-cache.js  ids.js  log.js  index.js (entry)                 │
+│ camera-clock.js (creation-time convention)  config.js            │
+│ fs-util.js  http-error.js  json-cache.js  ids.js  log.js  index.js│
 └──────────────┬──────────────────────────────┬───────────┬──────┘
                │ fs reads (moov + gpmd samples)│ .cache/   │ HTTP over USB (172.2X.1YZ.51:8080)
         GoPro .MP4 / .LRV / .THM files on disk           GoPro camera (GoPro Connect mode)
@@ -85,28 +85,42 @@ Key decisions and their rationale:
 | Driver-frame motion derived on the client from measured gravity (`web/js/motion.js`) | Up = 12-s moving average of the accelerometer; forward = optical axis projected on the horizontal plane; right = forward × up. Works for tilted or upside-down mounts without configuration. Verified on HERO13 dashcam footage: braking for a barrier shows −0.5 g longitudinal, a right turn shows −23 °/s yaw and +0.13 g lateral; corr(yaw, lateral g) = −0.64 as physics requires. |
 | Import straight from the camera over USB (Open GoPro HTTP on the GoPro Connect network) rather than through Finder / MTP | A GoPro is not a USB mass-storage device; in GoPro Connect mode it is a USB network card and Finder never sees it. Its HTTP API lists the card, serves every file with Range support and stays scriptable, at the USB 2.0 ceiling of ≈43 MB/s on a HERO13 (a card reader is 2–3× faster, not an order of magnitude). The camera's media list carries a creation time in the camera's local clock stored as if it were UTC, which is exactly what a date folder needs. |
 | Import ledger keyed by camera serial + folder + name + size + creation time, kept outside `.cache/` | "Already imported" must survive a deleted local copy and a purged cache, and must not misfire when a formatted card reuses `GX010001` for a new clip. The ledger is the only state the importer trusts; the destination folder is verified by byte count but never scanned for history. |
-| Code conventions enforced by `npm run lint` (ESLint) | No unused code (variables, private members, exports are checked by hand), no function above 50 lines or cyclomatic complexity 15, nesting ≤ 4, ≤ 5 parameters. Modules are small and single-purpose (`decode.js`, `json-cache.js`, `ids.js` on the server; `hud.js`, `stats.js` in the browser). Refactors are verified against golden outputs: every server function on all 13 reference clips plus a 40-step headless-browser DOM/canvas snapshot must stay identical. |
+| Code conventions enforced by `npm run lint` (ESLint, warnings fail) | No unused code (variables, private members, exports are checked by hand), no function above 40 lines or cyclomatic complexity 12, nesting ≤ 4, ≤ 5 parameters. Modules are small and single-purpose (`decode.js`, `json-cache.js`, `ids.js`, `fs-util.js`, `http-error.js`, `camera-clock.js` on the server; `hud.js`, `stats.js`, `util.js` in the browser). Refactors are verified against golden outputs: every server function on all 13 reference clips plus a 40-step headless-browser DOM/canvas snapshot must stay identical. |
 
 ## 4. Data model
 
 ### 4.1 Library (`GET /api/library`)
 
 ```
-{ scannedAt, roots: [{id, path}],
+{ scannedAt, roots: [{id, path, exists}],       // exists: false when the last scan found no such folder
   recordings: [{
     id, name,              // e.g. "GX0001" (prefix of first chapter + recording number)
-    dir, rootId, startTime, // startTime: MP4 creation time (camera local time, ISO)
+    dir, rootId,
+    startTime,             // the camera's local wall clock at the start, as an ISO string whose digits are local time
+    startTimeUtc,          // true UTC start when it can be known (see "creation time" below), else null
     durationSec, codec, width, height, fps, sizeBytes, firmware,
     hasGpmd, hasGps, hasImu, hasProxy, thumbId,   // hasGps/hasImu: probed from the first GPMF payloads at scan time
     chapters: [{ id, file, chapter, index, offsetSec, durationSec, sizeBytes,
-                 creationTime, video: {codec,width,height,fps,…}, hasGpmd, hasGps, hasImu, proxyId, thumbId }],
+                 creationTime, clock, gpsStartUtc,   // creationTime: mvhd as written; clock: "utc" | "local" | null; gpsStartUtc: GPS clock at t = 0
+                 video: {codec,width,height,fps,…}, hasGpmd, hasGps, hasImu, proxyId, thumbId }],
     warnings: [] }] }
 ```
 
 Chapter grouping rules (`server/library.js`): `GX/GHccnnnn.MP4` → recording `nnnn`, chapter `cc`;
 `GLccnnnn.LRV` → proxy of the same chapter; `*.THM` → thumbnail; `GOPRnnnn.MP4` + `GPccnnnn.MP4`
-(HERO5 and older) → chapter `00` + `cc`; any other `.mp4/.mov` → single-chapter recording.
-`offsetSec` of chapter *k* = Σ duration of chapters < *k* (video track duration).
+(HERO5 and older, `GPccnnnn.LRV` their proxies) → chapter `00` + `cc`; chapters are two digits, so a
+Fusion `GPFR…`/`GPBK…` pair is two loose videos; any other `.mp4/.mov` → single-chapter recording.
+Two files for the same chapter (a `.mov` re-encode next to the `.MP4`) keep the `.MP4` and warn.
+`offsetSec` of chapter *k* = Σ duration of chapters < *k* (movie duration, `mvhd`). Symlinked folders
+are followed; a file that vanishes between the listing and its `stat` is skipped, not fatal; a root
+added while a scan runs is scanned by a follow-up scan that the caller receives.
+
+Creation time (`server/camera-clock.js`): cameras up to the HERO11 write their *local* wall clock into
+the MP4's UTC field; the HERO12 and later write true UTC and keep the local clock in the settings
+header (CDAT) with the zone (TZON). The scan settles which it is — by the header when there is one,
+else by comparing the creation time with the GPS clock at the start of the file (within minutes: UTC;
+a zone away: local) — and derives `startTime` (local, for the sidebar and its date headers) and
+`startTimeUtc` from it. Nothing known → the historic reading (local), `startTimeUtc` null.
 
 ### 4.2 Telemetry (`GET /api/recordings/:id/telemetry`)
 
@@ -131,12 +145,16 @@ Units: `t` seconds from the first frame of chapter 1; speeds m/s; altitude metre
 the camera or the EGM96 correction provides it); `fix` 0/2/3; `dop` dilution of precision
 (GPS5 `GPSP/100`, GPS9 native); `utc` epoch ms from GPS time.
 
-Validity rule (client `web/js/track.js`, server `server/geo.js`): a GPS sample positions the
-marker / draws the track only if the receiver reported `fix ≥ 2` (2D or 3D — a sample with no
-fix reported at all is not positioned) and the coordinates are finite, non-zero and in range.
-A run of drawn points ends wherever that rule fails, so no line is ever drawn across a stretch
-the receiver could not position, and a run left with a single point is not drawn at all.
-Statistics apply the same validity rule; the altitude chart and CSV keep every sample.
+Validity rule (client `web/js/track.js`, server `server/geo.js` `hasPosition`): a GPS sample positions
+the marker / draws the track only if the receiver reported `fix ≥ 2` (2D or 3D — a sample with no fix
+reported at all, or a `fix` of 1, is not positioned) and the coordinates are finite, non-zero and in
+range. A run of drawn points ends wherever that rule fails (`positionRuns`), so no line is ever drawn
+across a stretch the receiver could not position, and a run left with a single point is not drawn at
+all. Statistics, GPX segments and GeoJSON features are built from the same runs (`runStats`): distance
+is summed inside runs and never across the gap between two; elevation figures come from 3D fixes only.
+The HUD and the altitude chart show position, altitude and speed only for samples that qualify, and
+interpolate between two samples only when both qualify — never towards one that does not. CSV keeps
+every sample.
 
 Speed rule (`SPEED_QUALITY` and `speedOkFlags` in `server/geo.js`, evaluated once per recording in
 `mergeChapters` and shipped as the `gps.speedOk` column): a speed reading counts only where the fix
@@ -172,14 +190,17 @@ GoPro writes the record-time settings into a GPMF block in the MP4 `udta` (`serv
 `orientation`, `control`, `powerProfile`, `tzMinutes` (TZON), `createdLocalEpoch` (CDAT). HERO6/7
 nest the keys in a STRM, HERO8+ store them flat — both are handled. HERO5 has no such block and Fusion
 only writes lens calibrations there: in both cases `settings` is `null`.
-`tzMinutes` + the camera creation time give a UTC start (`utcSource: "camera-clock"`) for recordings
-without GPS, so the HUD clock works on IMU-only footage.
+For recordings without GPS the camera clock anchors the HUD (`utcSource: "camera-clock"`): the creation
+time as it is when the camera wrote UTC (HERO12+, told by CDAT/TZON — see §4.1), else moved back by
+`tzMinutes`, so the HUD clock works on IMU-only footage from either generation.
 
 ### 4.3 Cache (`.cache/`)
 
-`info/<fileId>.json` — per-file MP4 metadata (validated by size + mtime).
+`info/<fileId>.json` — per-file MP4 metadata (validated by size + mtime + `INFO_VERSION`).
 `telemetry/<key>.json` — per-chapter normalised telemetry; key includes path, size, creation
-time, `CACHE_VERSION` and the IMU rate. Deleting `.cache/` is always safe.
+time, `CACHE_VERSION` and the IMU rate. Every cache file, the ledger and `config.json` are written
+through a temporary file and a rename (`fs-util.js` `writeJsonAtomic`), so a crash never leaves a
+half-written one. Deleting `.cache/` is always safe.
 
 ### 4.6 Import (`GET /api/import`, `POST /api/import`, `GET /api/import/job`)
 
@@ -197,9 +218,9 @@ GET  /api/import → { camera: { model, serial, firmware, url } | null, reason?,
                                imported: { at, dest, files } | null }],       // from the ledger
                      defaults: { dest, lrv, thm }, job }                       // last destination / sidecar choices; current or last job
 POST /api/import/choose-folder { current } → { path | null }                   // macOS folder panel on the server's screen; null = cancelled; 501 elsewhere
-POST /api/import { dest, keys: [key], lrv, thm } → 202 job                     // 400 bad input, 409 while one runs, 503 no camera
+POST /api/import { dest, keys: [key], lrv, thm } → 202 job                     // 400 bad input, 409 while one runs (or is being started), 503 no camera
 GET  /api/import/job → job | null      DELETE /api/import/job → { cancelled }
-POST /api/import/delete { keys: [key] } → job                                  // 409 no finished job, 400 for a clip that job did not bring in completely
+POST /api/import/delete { keys: [key] } → job                                  // 409 no finished job / another camera connected, 400 for a clip that job did not bring in completely, 503 no camera
 job = { id, state: running | done | failed | cancelled, dest, options: { lrv, thm }, camera, startedAt, finishedAt,
         totalBytes, doneBytes, rateBps,
         items: [{ key, name, date, size, total, bytes, status: pending | downloading | done | failed | cancelled, error,
@@ -208,16 +229,20 @@ job = { id, state: running | done | failed | cancelled, dest, options: { lrv, th
 ```
 
 `date` comes from `cre` read with UTC getters: the camera writes its local wall-clock time as if it
-were UTC (verified against the THM's EXIF time on the card), so the folder is the local recording date.
+were UTC (verified against the THM's EXIF time on the card), so the folder is the local recording date;
+an entry without a usable `cre` goes to `undated/`.
 Files per clip: the entry itself, plus `GLccnnnn.LRV` when `lrv` is on and the list reports an LRV
 size, plus `<stem>.THM` when `thm` is on (size unknown until fetched, so it joins the byte total on
 arrival and is never verified by count). Files are fetched in order, one clip at a time, oldest first;
-a file already at the destination with the expected size (any size, for a THM) is `present`; a
-`<file>.part` is resumed with `Range: bytes=<n>-` (a 200 restarts it, a 416 discards it); a file the
-camera does not serve (404) is `absent` and dropped from the byte total; the clip's ledger entry is
-written only when all its files are in. Deletion afterwards goes clip by clip: the MP4 first (a
-failure is reported on that clip and the others still go), then its LRV and THM names best-effort,
-since a camera may or may not remove them with the clip.
+a file already at the destination with the expected size (any size, for a THM) is `present` (a stale
+`.part` next to it is removed); a `<file>.part` is resumed with `Range: bytes=<n>-` (a 200 restarts it,
+a 416 discards it); a sidecar the camera does not serve (404) is `absent` and dropped from the byte
+total, while a 404 on the clip itself fails the clip; a transfer that carries no byte for 30 s is given
+up on (`failed`, the `.part` kept for a resume) — a Stop is the only thing that makes a clip
+`cancelled`; the clip's ledger entry is written (to disk first, then to memory) only when all its files
+are in. Deletion afterwards first checks that the camera answering is the one the job read from (its
+serial), then goes clip by clip: the MP4 first (a failure is reported on that clip and the others still
+go), then its LRV and THM names best-effort, since a camera may or may not remove them with the clip.
 
 The destination comes from the Mac's folder panel (`server/folder-picker.js`): `osascript -e 'tell me
 to activate' -e 'choose folder …'` in the server's own GUI session, opening on the last destination
@@ -234,11 +259,11 @@ ledger is an error, never treated as empty. `key = shortId('import', serial, dir
 | Method & path | Purpose |
 | --- | --- |
 | `GET /api/health` | liveness, node version, last scan time |
-| `GET /api/config` | host/port/cache/roots |
+| `GET /api/config` | host/port/cache/roots (each root with `exists`) |
 | `GET /api/library` | recordings (scans on first call) |
 | `POST /api/rescan` | rescan all roots |
 | `GET /api/recordings/:id/export.geojson` | driven route as a GeoJSON FeatureCollection |
-| `POST /api/roots {path}` / `DELETE /api/roots/:id` | manage media roots (persisted to `config.json`) |
+| `POST /api/roots {path}` / `DELETE /api/roots/:id` | manage media roots (persisted to `config.json`); a folder already inside a root is rescanned, not added |
 | `GET /api/media/:fileId` | video bytes, `Accept-Ranges: bytes`, 206 partial content |
 | `GET /api/thumb/:fileId` | THM/JPEG thumbnail |
 | `GET /api/recordings/:id/telemetry` | merged telemetry JSON |
@@ -253,7 +278,9 @@ ledger is an error, never treated as empty. `key = shortId('import', serial, dir
 | `GET /api/map-fonts/…` | K2 glyph ranges (no token upstream) |
 | `GET /`, `/vendor/maplibre/*`, `/vendor/uplot/*` | UI and vendored libraries |
 
-Errors are JSON `{ error }` with 400 (bad input), 404 (unknown id / route), 500 (unexpected).
+Errors are JSON `{ error }` with 400 (bad input), 403 (a `Host` header that is not localhost, on a
+loopback binding), 404 (unknown id / route), 409 (conflicting state), 503 (camera / map service not
+reachable), 500 (unexpected); the map token never appears in one.
 
 ### 4.4 Motion model (client, `web/js/motion.js`)
 
@@ -269,9 +296,11 @@ marked undefined (no heading axis). A rear-facing camera would flip forward/late
 ### 4.5 Map credentials and route rendering
 
 `config.json` holds the K2 `api`, `glyphs`, `token`, `basemap` and `labels`; only that file
-ever sees the token. `server/map.js` whitelists the tile and glyph path shapes, appends the
-token and streams the upstream response back, so the committed styles in `web/styles/` carry
-no host and no credential, and `/api/config` reports only whether a token is configured.
+ever sees the token. `server/map.js` whitelists the tile and glyph path shapes (a font name is
+letters, digits, spaces and hyphens once decoded — `..` cannot be smuggled in), appends the token
+and streams the upstream response back, so the committed styles in `web/styles/` carry no host and
+no credential, `/api/config` reports only whether a token is configured, and an upstream error is
+reported with the token masked. `map.api` / `map.glyphs` must be http(s) URLs (checked at start).
 
 The route is uploaded to the renderer once as one GeoJSON LineString per run
 (`lineMetrics: true`). Playback moves the cut point of a `line-gradient` per run instead of
@@ -295,7 +324,10 @@ boundary is expected and harmless.
 
 ## 7. Configuration
 
-Precedence: CLI flags → environment → `config.json` → defaults.
+Precedence: CLI flags → environment → `config.json` → defaults. Saving (a root added or removed in
+the UI, an import started) writes only `roots` and `import` onto the file's own content: a one-off
+`--host 0.0.0.0` or `--port` never becomes permanent and unknown keys survive. A missing option value
+or an unknown option is an error at start, not a silent default.
 
 | Setting | CLI | Env | Default |
 | --- | --- | --- | --- |
@@ -310,7 +342,7 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 
 ## 8. Acceptance criteria (v0.1)
 
-1. `npm test` passes (66 tests: demuxer + stream probe, library grouping, telemetry normalisation incl. GPS9 and camera-frame mapping, chapter merge/stats, exports, HTTP API incl. Range streaming, map proxy path whitelist and token signing, route geometry and gradients, the OSM styles re-derived from the K2 styles, import against a fake camera — date folders, LRV/THM options, ledger skip and manual re-import, in-place verification, Range resume, cancel, delete-from-camera guards and sidecars, error codes, folder-panel scripting) and `npm run lint` is clean (no unused code, no function above 50 lines or cyclomatic complexity 15).
+1. `npm test` passes (103 tests: demuxer incl. corrupt-table refusal + stream probe, library grouping incl. symlinks, duplicate chapters, missing roots and a root added mid-scan, the creation-time convention, telemetry normalisation incl. GPS9 and camera-frame mapping, geodesy — position validity, runs, run statistics, no bridging across lost fixes — chapter merge/stats, exports incl. GPX segments and GeoJSON run statistics, configuration loading/saving, HTTP API incl. Range streaming, non-Latin-1 file names, the Host check and covered roots, map proxy whitelist, token signing and masking, route geometry and gradients, the OSM styles re-derived from the K2 styles, the browser's formatting and track lookups, import against a fake camera — date folders, LRV/THM options, ledger skip and manual re-import, in-place verification, Range resume, cancel, a stalled transfer, a clip the camera does not serve, a second start, delete-from-camera guards, sidecars and the camera-identity check, error codes, folder-panel scripting) and `npm run lint` is clean with warnings counted as failures (no unused code, no function above 40 lines or cyclomatic complexity 12).
 2. Pointing the app at a folder of GoPro files lists every recording with correct chapter grouping and duration; scanning 500 files completes in seconds (moov-only reads, cached).
 3. Selecting a recording with GPS shows the track on the map, the HUD and charts populate, and pressing play moves the marker along the track in step with the video; the marker never draws through no-fix segments.
 4. Clicking on the map track, a chart or the timeline seeks the video (across chapters) and all views stay consistent.
@@ -327,7 +359,7 @@ Precedence: CLI flags → environment → `config.json` → defaults.
 | --- | --- | --- |
 | HEVC (GX files) needs a browser with hardware HEVC decoding | Safari and Chrome on Apple Silicon play them; other setups may fail to decode | Automatic fallback to the LRV proxy when present; error overlay explains the cause |
 | Map tiles require internet | Offline: track still renders on a blank canvas | Alternative basemap providers selectable |
-| GoPro creation time is local time stored as UTC | Library dates are "camera time" | Shown verbatim; GPS UTC is used for the HUD clock |
+| GoPro creation time means different things per generation (local time as UTC up to the HERO11, true UTC from the HERO12) | A file whose convention cannot be told (no settings header, no GPS fix) is read the historic way and could be listed a zone off | The header (CDAT/TZON) or the GPS clock decides at scan time (§4.1); GPS UTC drives the HUD clock whenever there is a fix |
 | GPS before first fix can report junk coordinates (e.g. 42°N 129°W) | Would draw wrong track | Fix-quality filter on client and in stats/GPX |
 | Camera GPS switched off (HERO13 Preferences › Regional › GPS; HERO12 has no GPS at all) | Telemetry track exists but carries no GPS stream: no map/speed/altitude | Library badge shows IMU instead of GPS; the viewer explains the cause and still plays video with IMU charts |
 | Very long recordings (hours) produce large telemetry JSON (tens of MB) | Slow first load | IMU downsampling; per-chapter cache; consider server-side decimation by zoom level (v0.2) |

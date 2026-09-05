@@ -1,12 +1,16 @@
-/** Shared helpers: formatting, search, interpolation. */
+/** Shared helpers: formatting, DOM, search, interpolation. */
 
 export const MS_TO_KMH = 3.6;
 export const G = 9.80665;
 
-/** Format seconds as m:ss.s or h:mm:ss.s */
+export const $ = (id) => document.getElementById(id);
+
+/** Format seconds as m:ss.s or h:mm:ss.s (rounded first, so 59.96 s reads 1:00.0, never 0:60.0). */
 export function fmtTime(sec, decimals = 1) {
   if (sec == null || !Number.isFinite(sec)) return '--';
-  const neg = sec < 0; sec = Math.abs(sec);
+  const neg = sec < 0;
+  const q = 10 ** decimals;
+  sec = Math.round(Math.abs(sec) * q) / q;
   const h = Math.floor(sec / 3600); const m = Math.floor((sec % 3600) / 60); const s = sec % 60;
   const sStr = decimals ? s.toFixed(decimals).padStart(3 + decimals, '0') : String(Math.floor(s)).padStart(2, '0');
   const body = h ? `${h}:${String(m).padStart(2, '0')}:${sStr}` : `${m}:${sStr}`;
@@ -24,15 +28,26 @@ export function fmtClock(ms, { utc = true, withDate = false } = {}) {
   return withDate ? `${get.y}-${p(get.mo)}-${p(get.da)} ${t}` : t;
 }
 
-/** "Camera time" ISO strings are local wall-clock stored as UTC: show them verbatim. */
+/** "Camera time" ISO strings are local wall-clock stored as UTC: show them verbatim ("YYYY-MM-DD HH:MM:SS"). */
 export function fmtCameraTime(iso) {
   if (!iso) return '--';
   return iso.replace('T', ' ').slice(0, 19);
 }
 
+/** A camera-clock epoch (seconds, local time stored as UTC) as "YYYY-MM-DD HH:MM". */
+export const fmtCameraEpoch = (epochSec) => fmtCameraTime(new Date(epochSec * 1000).toISOString()).slice(0, 16);
+
 /** Right-align a string in a fixed field (for monospace, white-space: pre contexts). */
 export function padL(s, width) { s = String(s); return s.length >= width ? s : ' '.repeat(width - s.length) + s; }
 export function padR(s, width) { s = String(s); return s.length >= width ? s : s + ' '.repeat(width - s.length); }
+
+/** Fixed-decimals number right-aligned in `width` characters; `--` when there is no value. */
+export function fmtNum(v, decimals, width = 0) {
+  return v == null || !Number.isFinite(v) ? padL('--', width) : padL(v.toFixed(decimals), width);
+}
+
+/** m/s → "km/h" figure with one decimal. */
+export const fmtKmh = (ms, decimals = 1) => (ms == null || !Number.isFinite(ms) ? '--' : (ms * MS_TO_KMH).toFixed(decimals));
 
 /** Signed number with a constant width: always a sign, fixed decimals, right-aligned. */
 export function fmtSigned(v, decimals = 2, width = 0) {
@@ -50,6 +65,9 @@ function utcOffsetLabel(minutes) {
 
 const protuneLabel = (s) => [s.color, s.sharpness && `sharp ${s.sharpness}`, s.whiteBalance && `WB ${s.whiteBalance}`].filter(Boolean).join(' · ') || 'On';
 
+/** Digital zoom: a factor ("1.4×") when the camera wrote one, "On" when it only said it was on. */
+const zoomLabel = (zoom) => (zoom === true ? 'On' : zoom > 1 ? `${Math.round(zoom * 100) / 100}×` : null);
+
 /** Settings worth showing, as [label, value(settings)] — a falsy value hides the row. */
 const SETTING_ROWS = [
   ['HyperSmooth', (s) => s.stabilization && (s.stabilization.enabled ? (s.stabilization.mode || 'On') : 'Off')],
@@ -61,7 +79,7 @@ const SETTING_ROWS = [
   ['ISO', (s) => s.isoMin != null && s.isoMax != null && `${s.isoMin}–${s.isoMax}`],
   ['EV', (s) => s.ev && (s.ev > 0 ? `+${s.ev}` : String(s.ev))],
   ['Bitrate', (s) => s.bitrate !== 'STANDARD' && s.bitrate],
-  ['Zoom', (s) => s.digitalZoom > 1 && `${s.digitalZoom}×`],
+  ['Zoom', (s) => zoomLabel(s.digitalZoom)],
   ['Lens mod', (s) => s.lensMod],
   ['HindSight', (s) => s.hindsight],
   ['Audio', (s) => s.audio !== 'AUTO' && s.audio],
@@ -84,6 +102,12 @@ export function fmtBytes(b) {
 export function fmtDistance(m) {
   if (m == null) return '--';
   return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
+}
+
+/** "…/last/two" of a path, or the path itself when it is that short. */
+export function shortPath(p) {
+  const parts = String(p ?? '').split('/').filter(Boolean);
+  return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : p;
 }
 
 /** Index of the last element ≤ v in a sorted array (or -1). */
@@ -125,6 +149,19 @@ export function percentile(values, p) {
   const v = values.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
   if (!v.length) return 0;
   return v[Math.min(v.length - 1, Math.floor(p * (v.length - 1)))];
+}
+
+/**
+ * Size a canvas to `w × h` CSS pixels at device resolution and return a context whose
+ * coordinates are CSS pixels. Only touches the backing store when the size changed.
+ */
+export function sizeCanvas(canvas, w, h) {
+  const dpr = window.devicePixelRatio || 1;
+  const pw = Math.round(w * dpr); const ph = Math.round(h * dpr);
+  if (canvas.width !== pw || canvas.height !== ph) { canvas.width = pw; canvas.height = ph; }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
 }
 
 export function el(tag, attrs = {}, children = []) {

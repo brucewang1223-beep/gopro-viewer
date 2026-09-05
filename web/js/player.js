@@ -10,6 +10,12 @@
 import { api } from './api.js';
 import { clamp } from './util.js';
 
+/** Global time of the middle of the frame `frames` away from the one showing at chapter-local time `local`. */
+function frameTarget(ch, fps, local, frames) {
+  const index = Math.max(0, Math.floor(local * fps + 1e-6));
+  return ch.offsetSec + (index + frames + 0.5) / fps;
+}
+
 export class Player {
   /**
    * @param {HTMLVideoElement} video
@@ -128,7 +134,8 @@ export class Player {
     this.h.onError?.(msg, { code: err?.code, chapter: this.chapter });
   }
 
-  play() { if (this.recording) this.video.play().catch((e) => this.h.onError?.(`Cannot play: ${e.message}`)); }
+  /** A play() interrupted by a pause() or a new source rejects with AbortError — routine, not an error worth an overlay. */
+  play() { if (this.recording) this.video.play().catch((e) => { if (e.name !== 'AbortError') this.h.onError?.(`Cannot play: ${e.message}`); }); }
   pause() { this.video.pause(); }
   toggle() { if (this.playing) this.pause(); else this.play(); }
 
@@ -146,13 +153,17 @@ export class Player {
     if (!ch) return;
     const fps = ch.video?.fps || this.recording?.fps || 30;
     const local = (this.pendingSeek ?? this.video.currentTime) || 0;
-    const index = Math.max(0, Math.floor(local * fps + 1e-6));
-    const target = ch.offsetSec + (index + frames + 0.5) / fps;
-    const next = this.chapters[this.chapterIndex + 1];
     this.pause();
-    // seek() keeps 50 ms clear of a chapter's end, so a step landing in that gap would stall:
-    // frames run on into the next file, so continue there instead.
-    this.seek(next && target > next.offsetSec - 0.05 ? next.offsetSec + 0.5 / (next.video?.fps || fps) : target);
+    this.seek(this.#intoNextChapter(frameTarget(ch, fps, local, frames), fps));
+  }
+
+  /**
+   * seek() keeps 50 ms clear of a chapter's end, so a step landing in that gap would stall:
+   * frames run on into the next file, so a target past the boundary continues there instead.
+   */
+  #intoNextChapter(target, fps) {
+    const next = this.chapters[this.chapterIndex + 1];
+    return next && target > next.offsetSec - 0.05 ? next.offsetSec + 0.5 / (next.video?.fps || fps) : target;
   }
 
   nextChapter() { if (this.chapterIndex + 1 < this.chapters.length) this.seek(this.chapters[this.chapterIndex + 1].offsetSec); }

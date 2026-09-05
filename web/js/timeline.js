@@ -4,7 +4,7 @@
  * so the playhead and the chart playheads line up and times can be read straight down.
  */
 
-import { fmtTime } from './util.js';
+import { fmtTime, sizeCanvas } from './util.js';
 
 const QUALITY_BUCKETS = 600;
 const QUALITY = { none: 0, noFix: 1, fix2d: 2, fix3d: 3 };
@@ -63,17 +63,12 @@ export class Timeline {
 
   setTime(t) { this.time = t; this.draw(); }
 
-  /** Size the backing store to the parent (minus padding) at device resolution; returns CSS size. */
+  /** Size the backing store to the canvas's own layout box (CSS gives it 100 % of its section) at device resolution; returns the CSS size. */
   #fit() {
     const c = this.canvas;
-    const dpr = window.devicePixelRatio || 1;
-    const w = c.parentElement.clientWidth - 20; const h = c.parentElement.clientHeight - 8;
+    const w = c.clientWidth; const h = c.clientHeight;
     if (w <= 0 || h <= 0) return null;
-    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
-      c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
-      c.style.width = `${w}px`; c.style.height = `${h}px`;
-    }
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.ctx = sizeCanvas(c, w, h);
     return { w, h };
   }
 

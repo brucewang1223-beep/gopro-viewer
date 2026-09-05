@@ -1,20 +1,24 @@
 /**
  * Export helpers: GPX 1.1 track, GeoJSON FeatureCollection and CSV tables from merged
- * recording telemetry. Points with fix < minFix (default 2) are excluded from GPX and
- * GeoJSON; CSV keeps every sample and includes the fix column.
+ * recording telemetry. GPX and GeoJSON carry the positioned samples only (fix ≥ minFix,
+ * default 2), one segment / LineString per run so no line bridges a stretch the receiver
+ * could not position; CSV keeps every sample and includes the fix column.
  */
 
-import { haversineM, hasPosition, positionRuns } from './geo.js';
+import { round, positionRuns, runStats } from './geo.js';
 
 const GPS_COLUMNS = ['t_sec', 'utc_iso', 'lat', 'lon', 'alt_m', 'speed2d_ms', 'speed3d_ms', 'fix', 'dop'];
 const GPX_HEAD = '<gpx version="1.1" creator="gopro-viewer" xmlns="http://www.topografix.com/GPX/1/1"'
   + ' xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">';
+const COORD_DECIMALS = 7;  // ~11 mm, past GPS precision
 
 const iso = (ms) => (ms != null ? new Date(ms).toISOString() : null);
 
 function xmlEscape(s) {
   return String(s).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 }
+
+/* ---------- GPX ---------- */
 
 function trackPoint(gps, i) {
   const ele = gps.alt[i] != null ? `<ele>${gps.alt[i]}</ele>` : '';
@@ -25,32 +29,33 @@ function trackPoint(gps, i) {
   return `    <trkpt lat="${gps.lat[i]}" lon="${gps.lon[i]}">${ele}${time}${speed}</trkpt>`;
 }
 
-function trackPoints(gps, minFix) {
+/** One `<trkseg>` per run of positioned samples. */
+function trackSegments(gps, opts) {
   const lines = [];
-  if (!gps) return lines;
-  for (let i = 0; i < gps.n; i++) if (hasPosition(gps, i, minFix)) lines.push(trackPoint(gps, i));
+  for (const { start, end } of gps ? positionRuns(gps, opts) : []) {
+    lines.push('  <trkseg>');
+    for (let i = start; i <= end; i++) lines.push(trackPoint(gps, i));
+    lines.push('  </trkseg>');
+  }
   return lines;
 }
 
-export function toGpx(tel, { minFix = 2 } = {}) {
+export function toGpx(tel, { minFix = 2, maxGapSec = 5 } = {}) {
   const name = xmlEscape(tel.name || 'GoPro track');
   const start = tel.utcOffsetMs != null ? `<time>${iso(tel.utcOffsetMs)}</time>` : '';
   const lines = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     GPX_HEAD,
     `  <metadata><name>${name}</name>${start}</metadata>`,
-    `  <trk><name>${name}</name><src>${xmlEscape(tel.camera?.model || 'GoPro')}</src><trkseg>`,
-    ...trackPoints(tel.gps, minFix),
-    '  </trkseg></trk>',
+    `  <trk><name>${name}</name><src>${xmlEscape(tel.camera?.model || 'GoPro')}</src>`,
+    ...trackSegments(tel.gps, { minFix, maxGapSec }),
+    '  </trk>',
     '</gpx>',
   ];
   return lines.join('\n') + '\n';
 }
 
 /* ---------- GeoJSON ---------- */
-
-const COORD_DECIMALS = 7;  // ~11 mm, past GPS precision
-const round = (v, d) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
 
 /** [lon, lat] or [lon, lat, alt] — GeoJSON positions are x, y, z. */
 function position(gps, i) {
@@ -62,25 +67,12 @@ function position(gps, i) {
 /** Per-run geometry plus the parallel per-point arrays kept in coordinateProperties. */
 function runGeometry(gps, run) {
   const coordinates = []; const times = []; const speeds = [];
-  let distanceM = 0; let maxSpeedMs = 0; let speedSum = 0; let prev = -1;
   for (let i = run.start; i <= run.end; i++) {   // a run holds positioned samples only
     coordinates.push(position(gps, i));
-    times.push(gps.utc[i] != null ? iso(gps.utc[i]) : null);
-    const speed = gps.speed2d[i] ?? null;
-    speeds.push(speed);
-    maxSpeedMs = Math.max(maxSpeedMs, speed ?? 0);
-    speedSum += speed ?? 0;
-    if (prev >= 0) distanceM += haversineM(gps.lat[prev], gps.lon[prev], gps.lat[i], gps.lon[i]);
-    prev = i;
+    times.push(iso(gps.utc[i]));
+    speeds.push(gps.speed2d[i] ?? null);
   }
-  const n = coordinates.length;
-  return {
-    coordinates, times, speeds, n,
-    distanceM: round(distanceM, 2),
-    durationSec: round(gps.t[run.end] - gps.t[run.start], 3),
-    maxSpeedMs: round(maxSpeedMs, 3),
-    avgSpeedMs: n ? round(speedSum / n, 3) : 0,
-  };
+  return { coordinates, times, speeds };
 }
 
 const stabilizationLabel = (stab) => {
@@ -108,6 +100,20 @@ function recordingProperties(tel) {
   };
 }
 
+/** Distance, duration and the trusted-speed summary of one run (the same rule as the stats bar; per-point speeds stay raw). */
+function runProperties(gps, run) {
+  const st = runStats(gps, run, { speedOk: gps.speedOk ?? null });
+  return {
+    points: run.end - run.start + 1,
+    distanceM: round(st.distanceM, 2),
+    durationSec: round(gps.t[run.end] - gps.t[run.start], 3),
+    maxSpeedMs: round(st.maxSpeedMs, 3),
+    avgSpeedMs: round(st.avgSpeedMs, 3),
+    videoStartSec: round(gps.t[run.start], 3),
+    videoEndSec: round(gps.t[run.end], 3),
+  };
+}
+
 function runFeature(tel, gps, run, index, runCount) {
   const geom = runGeometry(gps, run);
   const suffix = runCount > 1 ? ` (${index + 1}/${runCount})` : '';
@@ -116,15 +122,9 @@ function runFeature(tel, gps, run, index, runCount) {
     properties: {
       name: `${tel.name ?? 'GoPro track'}${suffix}`,
       ...recordingProperties(tel),
-      points: geom.n,
-      distanceM: geom.distanceM,
-      durationSec: geom.durationSec,
-      maxSpeedMs: geom.maxSpeedMs,
-      avgSpeedMs: geom.avgSpeedMs,
+      ...runProperties(gps, run),
       startTime: geom.times[0] ?? null,
       endTime: geom.times[geom.times.length - 1] ?? null,
-      videoStartSec: round(gps.t[run.start], 3),
-      videoEndSec: round(gps.t[run.end], 3),
       // parallel arrays, one entry per coordinate (the convention used by togeojson)
       coordinateProperties: { times: geom.times, speeds: geom.speeds },
     },

@@ -1,14 +1,18 @@
 /**
  * Small leveled logger. Output: ISO timestamp, level, module tag, message, optional JSON context.
- * Level is taken from LOG_LEVEL (debug | info | warn | error), default info.
+ * Level is taken from LOG_LEVEL (debug | info | warn | error | silent, any case), default info.
  */
 
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40, silent: 99 };
-let currentLevel = LEVELS[(process.env.LOG_LEVEL || 'info').toLowerCase()] ?? LEVELS.info;
+export const LOG_LEVELS = Object.keys(LEVELS);
+
+const levelValue = (level) => LEVELS[String(level ?? '').toLowerCase()];
+let currentLevel = levelValue(process.env.LOG_LEVEL || 'info') ?? LEVELS.info;
 
 export function setLogLevel(level) {
-  if (LEVELS[level] == null) throw new Error(`Unknown log level: ${level}`);
-  currentLevel = LEVELS[level];
+  const value = levelValue(level);
+  if (value == null) throw new Error(`Unknown log level: ${level} (expected ${LOG_LEVELS.join(' | ')})`);
+  currentLevel = value;
 }
 
 function fmt(ctx) {

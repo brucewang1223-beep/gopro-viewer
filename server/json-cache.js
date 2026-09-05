@@ -1,10 +1,11 @@
 /**
  * Tiny JSON file cache shared by the library (per-file info) and the telemetry service
- * (per-chapter data). Reads validate freshness; writes are best effort.
+ * (per-chapter data). Reads validate freshness; writes are atomic and best effort.
  */
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { writeJsonAtomic } from './fs-util.js';
 
 /** Parsed JSON when the file exists and `isFresh(json)` holds, otherwise null. */
 export async function readJsonCache(file, isFresh) {
@@ -19,8 +20,7 @@ export async function readJsonCache(file, isFresh) {
 /** A cache that cannot be written only costs a warning. */
 export async function writeJsonCache(file, data, log) {
   try {
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, JSON.stringify(data));
+    await writeJsonAtomic(file, data);
   } catch (e) {
     log.warn(`cannot write cache ${path.basename(file)}: ${e.message}`);
   }

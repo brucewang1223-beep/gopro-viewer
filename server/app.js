@@ -23,11 +23,13 @@
  *   GET  /api/map/*                        K2 map tiles / TileJSON (token added server-side)
  *   GET  /api/map-fonts/*                  K2 glyph ranges
  *   /  , /vendor/maplibre/*, /vendor/uplot/*  static UI + vendored libraries from node_modules
+ *
+ * Bound to the loopback address, the API only answers requests whose Host header names it,
+ * so a web page that resolves its own name to 127.0.0.1 (DNS rebinding) cannot drive it.
  */
 
 import express from 'express';
 import path from 'node:path';
-import { stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { PROJECT_ROOT, saveConfig } from './config.js';
 import { Library } from './library.js';
@@ -37,6 +39,7 @@ import { tileProxy, fontProxy } from './map.js';
 import { ImportLedger } from './import-ledger.js';
 import { Importer } from './importer.js';
 import { chooseFolder } from './folder-picker.js';
+import { isDirectory } from './fs-util.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
 
@@ -45,6 +48,8 @@ const log = createLogger('http');
 
 const MIME = { '.mp4': 'video/mp4', '.lrv': 'video/mp4', '.mov': 'video/quicktime', '.thm': 'image/jpeg', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' };
 const CSV_STREAMS = ['gps', 'accl', 'gyro'];
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
 const vendorDir = (pkg) => path.join(path.dirname(require.resolve(`${pkg}/package.json`)), 'dist');
 const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -59,6 +64,12 @@ function requestLogger(req, res, next) {
     log.debug(`${req.method} ${req.originalUrl} → ${res.statusCode} ${ms.toFixed(1)}ms`);
   });
   next();
+}
+
+/** On a loopback binding, requests addressed to any other host name are refused. */
+function loopbackOnly(req, res, next) {
+  if (LOOPBACK_HOST.test(req.headers.host ?? '')) return next();
+  return res.status(403).json({ error: `this server only answers to localhost (got Host: ${req.headers.host ?? 'none'})` });
 }
 
 function apiNotFound(req, res) {
@@ -80,12 +91,7 @@ async function resolveDirectory(input) {
   const trimmed = typeof input === 'string' ? input.trim() : '';
   if (!trimmed) return { error: 'path is required' };
   const dir = path.resolve(trimmed);
-  try {
-    if (!(await stat(dir)).isDirectory()) return { error: `not a directory: ${dir}` };
-  } catch {
-    return { error: `directory not found: ${dir}` };
-  }
-  return { path: dir };
+  return (await isDirectory(dir)) ? { path: dir } : { error: `not a directory: ${dir}` };
 }
 
 /** Media roots: the one place that changes cfg.roots, the library and config.json together. */
@@ -99,6 +105,7 @@ function rootStore(cfg, library) {
   const covered = (dir) => cfg.roots.some((root) => dir === root || dir.startsWith(root + path.sep));
   return {
     set,
+    covered,
     /** Rescans, adding `dir` as a root first unless a configured root already contains it. */
     include: (dir) => (covered(dir) ? library.scan() : set([...cfg.roots, dir])),
   };
@@ -115,8 +122,7 @@ function libraryRoutes(router, { cfg, library, roots }) {
   router.post('/roots', asyncRoute(async (req, res) => {
     const dir = await resolveDirectory(req.body?.path);
     if (dir.error) return res.status(400).json({ error: dir.error });
-    if (cfg.roots.includes(dir.path)) return res.json(await library.scan());
-    return res.json(await roots.set([...cfg.roots, dir.path]));
+    return res.json(await roots.include(dir.path));   // a folder inside a configured root is already part of the library
   }));
   router.delete('/roots/:id', asyncRoute(async (req, res) => {
     const kept = cfg.roots.filter((root) => shortId('root', root) !== req.params.id);
@@ -136,7 +142,7 @@ function mediaRoutes(router, { library }) {
     if (!file) return res.status(404).json({ error: 'unknown file id' });
     const kind = file.parsed?.kind ?? (MIME[file.ext]?.startsWith('video') ? 'video' : 'other');
     if (!kinds.includes(kind)) return res.status(404).json({ error: 'not a media file of the requested kind' });
-    const headers = { 'Content-Type': MIME[file.ext] ?? 'application/octet-stream', 'X-File-Name': file.name };
+    const headers = { 'Content-Type': MIME[file.ext] ?? 'application/octet-stream' };   // never the file name: a non-Latin-1 name is not a valid header value
     return res.sendFile(file.path, { acceptRanges: true, cacheControl: true, maxAge: '1h', lastModified: true, headers }, (err) => {
       if (err && !res.headersSent) res.status(err.status ?? 500).json({ error: err.message });
     });
@@ -152,6 +158,12 @@ function telemetryRoutes(router, { library, telemetry }) {
     if (!rec) return res.status(404).json({ error: 'unknown recording id' });
     return handler(req, res, rec);
   });
+  /** Sends an export as a download; `res.attachment` encodes any file name (Content-Disposition, RFC 5987). */
+  const download = (res, fileName, type, body) => {
+    res.attachment(fileName);
+    res.setHeader('Content-Type', type);
+    res.send(body);
+  };
 
   router.get('/recordings/:id/telemetry', withRecording(async (req, res, rec) => {
     const t0 = Date.now();
@@ -161,20 +173,14 @@ function telemetryRoutes(router, { library, telemetry }) {
     res.json(tel);
   }));
   router.get('/recordings/:id/export.gpx', withRecording(async (req, res, rec) => {
-    res.setHeader('Content-Type', 'application/gpx+xml; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${rec.name}.gpx"`);
-    res.send(toGpx(await telemetry.recordingTelemetry(rec)));
+    download(res, `${rec.name}.gpx`, 'application/gpx+xml; charset=utf-8', toGpx(await telemetry.recordingTelemetry(rec)));
   }));
   router.get('/recordings/:id/export.geojson', withRecording(async (req, res, rec) => {
-    res.setHeader('Content-Type', 'application/geo+json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${rec.name}.geojson"`);
-    res.send(toGeoJson(await telemetry.recordingTelemetry(rec)));
+    download(res, `${rec.name}.geojson`, 'application/geo+json; charset=utf-8', toGeoJson(await telemetry.recordingTelemetry(rec)));
   }));
   router.get('/recordings/:id/export.csv', withRecording(async (req, res, rec) => {
     const stream = CSV_STREAMS.includes(req.query.stream) ? req.query.stream : 'gps';
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${rec.name}_${stream}.csv"`);
-    res.send(toCsv(await telemetry.recordingTelemetry(rec), stream));
+    download(res, `${rec.name}_${stream}.csv`, 'text/csv; charset=utf-8', toCsv(await telemetry.recordingTelemetry(rec), stream));
   }));
 }
 
@@ -224,7 +230,8 @@ export function createApp(cfg) {
   api.use('/map-fonts', fontProxy(cfg.map));
 
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '64kb' }));
+  if (LOOPBACK.has(cfg.host)) app.use(loopbackOnly);
+  app.use(express.json({ limit: '1mb' }));   // a card full of time-lapse photos ticked at once is a long list of keys
   app.use(requestLogger);
   app.use('/api', api);
   app.use('/vendor/maplibre', express.static(vendorDir('maplibre-gl'), { maxAge: '7d' }));

@@ -13,7 +13,8 @@ import path from 'node:path';
 import { readMp4Info, readGpmfTrack } from './mp4.js';
 import { readStreamOrientations, cameraFrameMapping, headerSettingsSummary } from './gpmf-klv.js';
 import { decodeTelemetry, devicesOf } from './decode.js';
-import { haversineM, hasPosition, speedOkFlags } from './geo.js';
+import { round, positionRuns, runStats, speedOkFlags } from './geo.js';
+import { clockConvention } from './camera-clock.js';
 import { readJsonCache, writeJsonCache } from './json-cache.js';
 import { shortId } from './ids.js';
 import { createLogger } from './log.js';
@@ -24,8 +25,6 @@ const CACHE_VERSION = 6; // bump when the chapter output changes
 
 const GPS_COLUMNS = ['t', 'lat', 'lon', 'alt', 'speed2d', 'speed3d', 'fix', 'dop', 'utc'];
 const IMU_COLUMNS = ['t', 'x', 'y', 'z', 'mag', 'magMax'];
-
-const round = (v, d) => (v == null || Number.isNaN(v) ? null : Math.round(v * 10 ** d) / 10 ** d);
 
 /* ---------- per-chapter normalisation ---------- */
 
@@ -40,6 +39,14 @@ function pickDevice(tel) {
   return best;
 }
 
+/** Bin accumulator of a 3-axis stream: sums per axis plus mean and peak magnitude. */
+function addToBin(bins, key, [x, y, z]) {
+  let b = bins.get(key);
+  if (!b) { b = { n: 0, x: 0, y: 0, z: 0, mag: 0, max: 0 }; bins.set(key, b); }
+  const mag = Math.sqrt(x * x + y * y + z * z);
+  b.n++; b.x += x; b.y += y; b.z += z; b.mag += mag; b.max = Math.max(b.max, mag);
+}
+
 /**
  * Downsample a 3-axis stream to `hz` by time-binning, re-expressed in the GoPro camera
  * frame (x = camera left, y = camera back, z = up) using the ORIN/ORIO mapping.
@@ -49,17 +56,11 @@ function downsample3(samples, hz, orientation) {
   const width = 1 / hz;
   const mapping = cameraFrameMapping(orientation || {});
   const axis = Object.fromEntries(mapping.map.map((m) => [m.axis, m]));
+  const inCameraFrame = (v) => ['x', 'y', 'z'].map((k) => axis[k].sign * v[axis[k].index]);
   const bins = new Map();
   for (const s of samples) {
     if (!Array.isArray(s.value) || s.value.length < 3 || s.cts == null) continue;
-    const x = axis.x.sign * s.value[axis.x.index];
-    const y = axis.y.sign * s.value[axis.y.index];
-    const z = axis.z.sign * s.value[axis.z.index];
-    const mag = Math.sqrt(x * x + y * y + z * z);
-    const key = Math.floor(s.cts / 1000 / width);
-    let b = bins.get(key);
-    if (!b) { b = { n: 0, x: 0, y: 0, z: 0, mag: 0, max: 0 }; bins.set(key, b); }
-    b.n++; b.x += x; b.y += y; b.z += z; b.mag += mag; b.max = Math.max(b.max, mag);
+    addToBin(bins, Math.floor(s.cts / 1000 / width), inCameraFrame(s.value));
   }
   const keys = [...bins.keys()].sort((a, b) => a - b);
   const out = {
@@ -82,19 +83,27 @@ function fixAndDop(key, s, prev) {
   return { fix: s.fix ?? prev.fix, dop: s.precision != null ? s.precision / 100 : prev.dop };
 }
 
+/** One GPS sample as a row of the columnar stream. */
+function gpsRow(s, state) {
+  const v = s.value;
+  return {
+    t: round(s.cts / 1000, 4), lat: round(v[0], 7), lon: round(v[1], 7), alt: round(v[2], 2),
+    speed2d: round(v[3], 3), speed3d: round(v[4], 3),
+    fix: state.fix == null ? null : Number(state.fix), dop: state.dop == null ? null : round(state.dop, 2),
+    utc: s.date ? new Date(s.date).getTime() : null,
+  };
+}
+
 function normalizeGps(stream, key) {
-  const out = { source: key, n: 0, t: [], lat: [], lon: [], alt: [], speed2d: [], speed3d: [], fix: [], dop: [], utc: [], altitudeSystem: null };
+  const out = { source: key, n: 0, altitudeSystem: null, hz: 0 };
+  for (const c of GPS_COLUMNS) out[c] = [];
   let state = { fix: null, dop: null };
   for (const s of stream.samples) {
-    const v = s.value;
-    if (!Array.isArray(v) || v.length < 5 || s.cts == null) continue;
+    if (!Array.isArray(s.value) || s.value.length < 5 || s.cts == null) continue;
     state = fixAndDop(key, s, state);
     if (s['altitude system'] && !out.altitudeSystem) out.altitudeSystem = s['altitude system'];
-    out.t.push(round(s.cts / 1000, 4));
-    out.lat.push(round(v[0], 7)); out.lon.push(round(v[1], 7)); out.alt.push(round(v[2], 2));
-    out.speed2d.push(round(v[3], 3)); out.speed3d.push(round(v[4], 3));
-    out.fix.push(state.fix == null ? null : Number(state.fix)); out.dop.push(state.dop == null ? null : round(state.dop, 2));
-    out.utc.push(s.date ? new Date(s.date).getTime() : null);
+    const row = gpsRow(s, state);
+    for (const c of GPS_COLUMNS) out[c].push(row[c]);
   }
   out.n = out.t.length;
   const dt = out.n > 1 ? (out.t[out.n - 1] - out.t[0]) / (out.n - 1) : 0;
@@ -115,8 +124,9 @@ export function normalizeTelemetry(tel, { accelHz = 25, orientations = {} } = {}
   const gpsKey = ['GPS9', 'GPS5'].find((k) => streams[k]?.samples?.length);
   if (gpsKey) out.gps = normalizeGps(streams[gpsKey], gpsKey);
   else out.warnings.push('no GPS stream');
-  if (streams.ACCL?.samples?.length) out.accl = downsample3(streams.ACCL.samples, accelHz, orientations.ACCL);
-  if (streams.GYRO?.samples?.length) out.gyro = downsample3(streams.GYRO.samples, accelHz, orientations.GYRO);
+  const imu = (key) => (streams[key]?.samples?.length ? downsample3(streams[key].samples, accelHz, orientations[key]) : null);
+  out.accl = imu('ACCL');
+  out.gyro = imu('GYRO');
   return out;
 }
 
@@ -138,31 +148,35 @@ function chapterHeader(filePath, info) {
 
 const streamCounts = ({ gps, accl, gyro }) => `gps=${gps?.n ?? 0} (${gps?.source ?? '-'}) accl=${accl?.n ?? 0} gyro=${gyro?.n ?? 0}`;
 
+/** Decode + normalise the raw GPMF payloads of a chapter; a failure is a warning on the chapter, never an exception. */
+async function decodeChapter(chapter, filePath, rawData, timing, accelHz) {
+  let orientations = {};
+  try { orientations = readStreamOrientations(rawData); } catch (e) { chapter.warnings.push(`orientation read failed: ${e.message}`); }
+  try {
+    return normalizeTelemetry(await decodeTelemetry({ rawData, timing }), { accelHz, orientations });
+  } catch (e) {
+    chapter.warnings.push(`telemetry decode failed: ${e.message}`);
+    log.warn(`telemetry decode failed for ${filePath}: ${e.message}`);
+    return null;
+  }
+}
+
 /**
  * Parse and normalise a single chapter file.
  * @param {string} filePath
- * @param {{ accelHz?: number }} opts
+ * @param {{ accelHz?: number, info?: object }} opts  `info`: an already-read `readMp4Info(filePath)` (with samples)
  */
-export async function parseChapter(filePath, { accelHz = 25 } = {}) {
+export async function parseChapter(filePath, { accelHz = 25, info = null } = {}) {
   const t0 = Date.now();
-  const info = await readMp4Info(filePath);
+  info ??= await readMp4Info(filePath);
   const chapter = chapterHeader(filePath, info);
   if (!info.gpmd?.samples?.length) {
     chapter.warnings.push('no GPMF track in file');
     return chapter;
   }
   const { rawData, timing } = await readGpmfTrack(filePath, info);
-  let tel;
-  try {
-    tel = await decodeTelemetry({ rawData, timing });
-  } catch (e) {
-    chapter.warnings.push(`gopro-telemetry failed: ${e.message}`);
-    log.warn(`gopro-telemetry failed for ${filePath}: ${e.message}`);
-    return chapter;
-  }
-  let orientations = {};
-  try { orientations = readStreamOrientations(rawData); } catch (e) { chapter.warnings.push(`orientation read failed: ${e.message}`); }
-  const norm = normalizeTelemetry(tel, { accelHz, orientations });
+  const norm = await decodeChapter(chapter, filePath, rawData, timing, accelHz);
+  if (!norm) return chapter;
   Object.assign(chapter, { gps: norm.gps, accl: norm.accl, gyro: norm.gyro });
   chapter.camera.model = norm.model;
   chapter.warnings.push(...norm.warnings);
@@ -179,10 +193,16 @@ function emptyStats(totalPoints) {
   };
 }
 
-function countFix(counts, fix) {
-  if (fix == null || fix === 0) counts.none++;
-  else if (fix === 2) counts.fix2d++;
-  else counts.fix3d++;
+/** Samples per reported fix quality: 3D, 2D, and everything else (no lock, no report, an odd value). */
+function fixHistogram(gps) {
+  const counts = { none: 0, fix2d: 0, fix3d: 0 };
+  for (let i = 0; i < gps.n; i++) {
+    const fix = gps.fix[i];
+    if (fix >= 3) counts.fix3d++;
+    else if (fix === 2) counts.fix2d++;
+    else counts.none++;
+  }
+  return counts;
 }
 
 /** Min/max altitude plus hysteresis-filtered gain/loss (a change counts once it exceeds the threshold). */
@@ -195,50 +215,51 @@ function trackElevation(st, alt, elev, thresholdM) {
   else if (elev.ref - alt >= thresholdM) { st.elevLossM += elev.ref - alt; elev.ref = alt; }
 }
 
-/** Distance and moving time contributed by the leg from valid sample `prev` to `i`. */
-function addLeg(st, gps, prev, i, { speed, movingSpeedMs }) {
-  if (prev < 0) return;
-  const dt = gps.t[i] - gps.t[prev];
-  st.distanceM += haversineM(gps.lat[prev], gps.lon[prev], gps.lat[i], gps.lon[i]);
-  if (speed != null && speed > movingSpeedMs && dt > 0 && dt < 5) st.movingTimeSec += dt;
-}
-
-/** Max / mean over the speeds worth trusting, and how many of them there were. */
-function speedSummary(gps, speedOk) {
-  let max = 0; let sum = 0; let n = 0;
-  for (let i = 0; i < gps.n; i++) {
-    const v = speedOk[i] ? gps.speed2d[i] : null;
-    if (v == null) continue;
-    max = Math.max(max, v); sum += v; n++;
+/** Elevation figures over the samples with a 3D fix — a 2D fix carries no altitude worth the name. */
+function elevationStats(st, gps, runs, thresholdM) {
+  const elev = { ref: null };
+  for (const { start, end } of runs) {
+    for (let i = start; i <= end; i++) if (gps.fix[i] >= 3) trackElevation(st, gps.alt[i], elev, thresholdM);
   }
-  return { maxSpeedMs: max, avgSpeedMs: n ? sum / n : 0, speedPoints: n };
 }
 
+/**
+ * Ride statistics over the positioned samples, run by run: distance never bridges a stretch
+ * the receiver could not position (the same runs the map draws and GeoJSON exports), speeds
+ * come from the samples with a steady fix, elevation from 3D fixes.
+ */
 export function computeStats(gps, { minFix = 2, elevThresholdM = 3, movingSpeedMs = 0.5 } = {}) {
   const st = emptyStats(gps?.n ?? 0);
   if (!gps || !gps.n) return st;
   const speedOk = gps.speedOk ?? speedOkFlags(gps, { minFix });
-  const elev = { ref: null };
-  let prev = -1;
-  for (let i = 0; i < gps.n; i++) {
-    countFix(st.fixCounts, gps.fix[i]);
-    if (!hasPosition(gps, i, minFix)) continue;
-    st.validPoints++;
-    addLeg(st, gps, prev, i, { speed: speedOk[i] ? gps.speed2d[i] : null, movingSpeedMs });
-    trackElevation(st, gps.alt[i], elev, elevThresholdM);
-    prev = i;
-  }
-  Object.assign(st, speedSummary(gps, speedOk));
+  const runs = positionRuns(gps, { minFix });
+  addRunStats(st, gps, runs, { speedOk, movingSpeedMs });
+  st.fixCounts = fixHistogram(gps);
+  elevationStats(st, gps, runs, elevThresholdM);
   for (const k of ['distanceM', 'movingTimeSec', 'maxSpeedMs', 'avgSpeedMs', 'elevGainM', 'elevLossM']) st[k] = round(st[k], 2);
   return st;
 }
 
+/** Distance, moving time and the speed summary of every run, folded into `st`. */
+function addRunStats(st, gps, runs, opts) {
+  let speedSum = 0;
+  for (const run of runs) {
+    const r = runStats(gps, run, opts);
+    st.validPoints += run.end - run.start + 1;
+    st.distanceM += r.distanceM; st.movingTimeSec += r.movingTimeSec;
+    st.maxSpeedMs = Math.max(st.maxSpeedMs, r.maxSpeedMs);
+    speedSum += r.avgSpeedMs * r.speedPoints; st.speedPoints += r.speedPoints;
+  }
+  st.avgSpeedMs = st.speedPoints ? speedSum / st.speedPoints : 0;
+}
+
 /* ---------- merge ---------- */
 
+/** Column-wise concatenation (a plain loop: spreading a long chapter into push() overflows the stack). */
 function concatColumns(parts, keys) {
   const out = {};
   for (const k of keys) out[k] = [];
-  for (const p of parts) for (const k of keys) if (p[k]) out[k].push(...p[k]);
+  for (const p of parts) for (const k of keys) if (p[k]) for (const v of p[k]) out[k].push(v);
   return out;
 }
 
@@ -262,6 +283,13 @@ function chapterSummary(chapter, data) {
   return { id, file, index, offsetSec, durationSec, gpsPoints: data.gps?.n ?? 0, gpsSource: data.gps?.source ?? null, warnings: data.warnings };
 }
 
+/** The camera of a recording: the first chapter that names a model, else the first that says anything. */
+function cameraOf(items) {
+  const cameras = items.map((it) => it.data.camera).filter(Boolean);
+  const camera = cameras.find((c) => c.model) ?? cameras.find((c) => c.firmware || c.lens);
+  return { model: null, firmware: null, lens: null, ...camera };
+}
+
 /**
  * utc = t*1000 + offset, anchored on the first GPS sample with a real fix (GPS time is
  * only trustworthy once the receiver has locked), else on any dated sample.
@@ -279,14 +307,17 @@ function gpsUtcOffset(gps) {
 
 /**
  * Wall-clock alignment of the recording: GPS time when available, otherwise the camera
- * clock (creation time is local wall-clock) corrected by the header time zone (TZON,
- * minutes east of UTC).
+ * clock — the creation time as it is when the camera writes UTC (HERO12+), corrected by
+ * the header time zone (TZON) when it writes local time (see camera-clock.js).
  */
 function utcAlignment(gps, settings, creationTime) {
   const fromGps = gpsUtcOffset(gps);
   if (fromGps != null) return { utcOffsetMs: fromGps, utcSource: 'gps' };
-  const localMs = settings?.tzMinutes != null && creationTime ? Date.parse(creationTime) : NaN;
-  if (Number.isFinite(localMs)) return { utcOffsetMs: localMs - settings.tzMinutes * 60000, utcSource: 'camera-clock' };
+  const clockMs = Date.parse(creationTime ?? '');
+  const tz = settings?.tzMinutes;
+  if (!Number.isFinite(clockMs)) return { utcOffsetMs: null, utcSource: null };
+  if (clockConvention({ creationTime, settings }) === 'utc') return { utcOffsetMs: clockMs, utcSource: 'camera-clock' };
+  if (tz != null) return { utcOffsetMs: clockMs - tz * 60000, utcSource: 'camera-clock' };
   return { utcOffsetMs: null, utcSource: null };
 }
 
@@ -299,39 +330,42 @@ function withSpeedFlags(gps) {
   return gps;
 }
 
+/** Per-chapter streams shifted into recording time, plus the chapter summaries and warnings. */
+function collectParts(items) {
+  const parts = { gps: [], accl: [], gyro: [] };
+  const chapters = []; const warnings = [];
+  for (const { chapter, data } of items) {
+    chapters.push(chapterSummary(chapter, data));
+    for (const w of data.warnings || []) warnings.push(`${chapter.file}: ${w}`);
+    for (const key of Object.keys(parts)) if (data[key]) parts[key].push(shifted(data[key], chapter.offsetSec));
+  }
+  return { parts, chapters, warnings };
+}
+
 /**
  * Merge per-chapter telemetry into one recording timeline.
  * @param {Array<{ chapter: object, data: object }>} items ordered by chapter index
  */
 export function mergeChapters(recording, items) {
-  const parts = { gps: [], accl: [], gyro: [] };
-  const chapters = []; const warnings = [];
-  let camera = { model: null, firmware: null, lens: null };
-  let settings = null;
-  for (const { chapter, data } of items) {
-    chapters.push(chapterSummary(chapter, data));
-    for (const w of data.warnings || []) warnings.push(`${chapter.file}: ${w}`);
-    if (!camera.model && data.camera?.model) camera = { ...camera, ...data.camera };
-    settings ??= data.settings ?? null;
-    for (const key of Object.keys(parts)) if (data[key]) parts[key].push(shifted(data[key], chapter.offsetSec));
-  }
+  const { parts, chapters, warnings } = collectParts(items);
+  const settings = items.map((it) => it.data.settings).find(Boolean) ?? null;
   const altitudeSystem = parts.gps.find((g) => g.altitudeSystem)?.altitudeSystem ?? null;
   const gps = withSpeedFlags(mergeStreams(parts.gps, GPS_COLUMNS, (first) => ({ source: first.source, hz: first.hz, altitudeSystem })));
-  const accl = mergeStreams(parts.accl, IMU_COLUMNS, imuHeader);
-  const gyro = mergeStreams(parts.gyro, IMU_COLUMNS, imuHeader);
   const { utcOffsetMs, utcSource } = utcAlignment(gps, settings, items[0]?.data?.creationTime);
   return {
     schema: SCHEMA,
     recordingId: recording.id,
     name: recording.name,
-    camera,
+    camera: cameraOf(items),
     video: { codec: recording.codec, width: recording.width, height: recording.height, fps: recording.fps, durationSec: recording.durationSec },
     startTimeCamera: recording.startTime,
     settings,
     utcOffsetMs,
     utcSource,
     chapters,
-    gps, accl, gyro,
+    gps,
+    accl: mergeStreams(parts.accl, IMU_COLUMNS, imuHeader),
+    gyro: mergeStreams(parts.gyro, IMU_COLUMNS, imuHeader),
     stats: computeStats(gps),
     warnings,
   };
