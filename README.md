@@ -1,142 +1,273 @@
 # GoPro Viewer
 
-把 GoPro 当行车记录仪用的人需要的那个回放工具：视频和它自带的 GPS、加速度、陀螺仪数据同步回放——地图上的轨迹、画面上的速度和 G 力、下面的速度 / 海拔曲线，点哪儿跳哪儿；片子直接从相机走 USB 导进电脑。全部在本机运行，不经过任何云。
+Your GoPro already knows where you were, how fast you were going and how hard you braked. It just
+keeps all of it to itself, in a corner of the MP4 that nothing opens. This tool opens it: video, map
+track, HUD and charts on one timeline, and a USB import that gets the clips off the camera without a
+ceremony. Everything runs on your own machine.
 
-[English README](README.en.md) · 设计文档 [`docs/SPEC.md`](docs/SPEC.md)（英文）
+English · [简体中文](README.zh-CN.md) · Design notes: [`docs/SPEC.md`](docs/SPEC.md)
 
-![主界面：视频、仪表、HUD、地图轨迹和曲线共用一条时间轴](docs/screenshots/viewer.jpg)
+![Main view: video, gauges, HUD, map track and charts on one timeline](docs/screenshots/viewer.jpg)
 
-## 为什么做这个
+## Why this exists
 
-我把 GoPro（HERO13 Black）当行车记录仪用。用了一段时间，有三件事一直不顺手：
+I run a GoPro (HERO13 Black) as a dashcam. Three things got old quickly:
 
-- **不喜欢 Quik。** 我只想看片子、看数据，不想被一个剪辑 App 牵着走。
-- **导到电脑上不容易。** 相机插上 Mac 并不是一个 U 盘（默认的 GoPro Connect 模式下它是一块 USB 网卡），不是拔卡就是折腾软件，几十 GB 的素材每次都是一场仪式。
-- **看视频和地图的关系不方便。** 这段画面对应地图上哪里、当时开多快、刹车有多猛——数据其实都在 MP4 里（GoPro 的 GPMF 遥测流），但没有一个顺手的工具把它们放在一起看。
+- **Quik and I want different things.** It would like to make me a highlight reel. I would like to
+  watch the footage and read the numbers.
+- **Getting the clips onto the computer is a production.** Plug a HERO13 into a Mac and you do not
+  get a USB drive — in the default GoPro Connect mode you get a network adapter. So it is either pull
+  the card or wrestle with software, and 30 GB turns into an evening.
+- **The video and the map had never met.** Where was this corner, how fast was that, how hard was
+  that stop? The answers are already inside the file — GoPro writes a GPMF telemetry stream next to
+  the picture — but nothing on my Mac would show me both at once.
 
-所以决定自己做一个：只做回放和导入，把视频、地图、数据放在一个页面里，一条时间轴。
+So this one does three things and stops there: play the footage, draw the numbers, and bring the
+clips in over the cable. No editing timeline, no cloud, no account.
 
-## 这个工具是怎么做出来的
+## How it was built
 
-整个工具是用 Claude（Claude Opus 5 和 Claude Fable 5.1）完全通过聊天做出来的——从第一行代码到这份 README 和这几张截图，全部在聊天窗口里完成，每次提交的 Co-Authored-By 都如实写着是哪个模型。我提需求、提意见、拍板；它做设计、写代码、写测试，在我的 Mac 上连着真机验证（试相机的 USB 接口、在 Chrome 里截图核对界面），然后提交。103 个自动化测试和 ESLint 的规矩（函数不超过 40 行、圈复杂度不超过 12、不留死代码）也是这么定下来的；1.0 之前又完整 review 了一遍代码，顺手修掉了几十个小问题。
+By chatting with Claude. All of it — the code, the tests, this README and the screenshots in it
+(Opus 5 and Fable 5.1; every commit names the model in its `Co-Authored-By` trailer, which is the
+honest record). I brought the requirements, the opinions and the occasional veto; it brought the
+design, the code, the tests, and the habit of checking things against the real camera on my Mac
+before claiming they worked.
 
-分享出来，给同样拿 GoPro 当行车记录仪、又不想用 Quik 的兄弟。MIT 协议，随便用、随便改。
+The house rules ended up in the repository rather than in the story: 103 automated tests, ESLint with
+warnings failing the build, no function over 40 lines, no dead code left lying around. Version 1.0
+came out of a full review pass that found and fixed some sixty small sins.
 
-## 截图
+Shared for anyone else running a GoPro on the windscreen who would rather not open Quik. MIT — take
+it, change it, no need to ask.
 
-![卫星底图叠加地名和道路标注，轨迹按速度着色](docs/screenshots/satellite.jpg)
+## Screenshots
 
-卫星底图（Esri 影像）叠加地名 / 道路标注，轨迹按速度着色，箭头是当前位置；下方是这段录像的统计和相机设置。
+![Satellite basemap with labels, the route coloured by speed](docs/screenshots/satellite.jpg)
 
-![从相机导入：列出卡里的片段，导过的不再自动勾选](docs/screenshots/import.jpg)
+Satellite imagery (Esri) with place and road labels on top, the route coloured by speed and the arrow
+at the current position; the bar underneath carries the statistics and the camera settings for this
+recording.
 
-从相机导入：USB 直连，列出卡里的片段；导过的写明哪天导到了哪里，不再自动勾选。
+![Import from the camera: the card listed, already-imported clips left unticked](docs/screenshots/import.jpg)
 
-## 功能一览
+Import over USB: the card listed clip by clip. Anything imported before says when it came in and
+where it went, and is left unticked.
 
-- **同步回放**：视频、地图、HUD、曲线共用一条时间轴。点地图上的轨迹、点曲线、点时间轴都能跳转，曲线上拖动可以放大。同一段录像的分段文件（GX01xxxx、GX02xxxx…）自动合并成一条。
-- **画面上的数据**：HUD 显示速度、海拔、经纬度、定位状态（2D / 3D、DOP）、UTC 和本地时间、当前 G 值；三个仪表——G 力球（加速 / 刹车 / 转弯）、陀螺球（转向率、俯仰率、横滚率）、姿态泡（俯仰和横滚）。相机歪着装、倒着装都行，"上"是量出来的，不是假设的。
-- **曲线**：速度、海拔、G 力（纵向 / 横向 / 垂直）、陀螺仪。速度只在定位稳定的区段显示，弱信号下的假速度不会画出来。
-- **地图**：OpenStreetMap 街道底图和 Esri 卫星影像（可叠加地名 / 道路标注），不需要任何 key；轨迹分已走 / 未走，可按速度着色；可以跟随当前位置，也可以一键回到全程。
-- **从相机导入**：USB 直接列出卡里的内容，按录制日期分目录，导完可选择从相机删除；导过的片段有台账，不会重复导入，需要时手动重导。详见下面。
-- **导出**：GPX、GeoJSON、CSV（每个 GPS 采样点）、IMU CSV（25 Hz 加速度），另有命令行工具批量提取。
-- **本机运行**：服务只监听 `127.0.0.1`，视频和数据不出电脑，只有地图瓦片需要联网。macOS 上可以开机自启，并装成 Chrome 桌面应用。
+## What it does
 
-## 快速开始
+- **One timeline.** Video, map, HUD and charts follow the same playhead. Click the route, a chart or
+  the timeline to seek; drag on a chart to zoom (double-click resets). Chapters of one recording
+  (`GX01…`, `GX02…`) are merged and play as a single continuous clip.
+- **Numbers on the picture.** The HUD gives speed, altitude, position, fix quality (2D/3D and DOP),
+  UTC and local time, and current g. Three gauges sit at the top of the video: a G-force ball
+  (accelerate / brake / corner), a gyro ball (yaw, pitch and roll rates) and an attitude bubble
+  (pitch and roll). Mount the camera tilted or upside down if you like — "up" is measured from
+  gravity, not assumed.
+- **Charts.** Speed, altitude, longitudinal / lateral / vertical g, gyro rates. Speed is drawn only
+  where the fix is steady, so the phantom 270 km/h that a searching receiver repeats never reaches
+  the line.
+- **Map.** OpenStreetMap streets and Esri satellite imagery with an optional label overlay — no key,
+  no account. The route is split into travelled and remaining and can be coloured by speed; follow
+  the current position, or fit the whole route with one key.
+- **Import over USB.** Lists the card, files clips by recording date, keeps a ledger of what came in,
+  and offers to clear the card afterwards. Details below.
+- **Export.** GPX, GeoJSON, CSV (every GPS sample) and IMU CSV (25 Hz accelerometer), plus a CLI for
+  batch extraction.
+- **Local.** The server binds to `127.0.0.1`. Footage and telemetry never leave the machine; only the
+  map tiles come from the internet.
 
-需要 Node.js 20 或更新（22、24 上测过）。
+## Requirements
+
+Node.js ≥ 20 (tested on 22 and 25) and a browser that can decode your footage: H.264 (`GH…` files)
+plays everywhere, HEVC (`GX…` files) plays in Safari and in Chrome on Apple Silicon Macs. Where it
+will not, tick **Proxy (LRV)** and the viewer plays the camera's own low-resolution copy instead —
+same telemetry, smaller picture.
+
+## Quick start
 
 ```bash
 git clone https://github.com/brucewang1223-beep/gopro-viewer.git
 cd gopro-viewer
 npm install
-npm start -- --media /Volumes/GOPRO/DCIM      # 换成你放 GoPro 视频的目录，可以给多个
-# 打开 http://127.0.0.1:8790
+npm start -- --media /Volumes/GOPRO/DCIM     # one or more folders holding your footage
+# → http://127.0.0.1:8790
 ```
 
-也可以启动后在页面顶部 **Add folder** 添加目录（会存进 `config.json`），或者照着 `config.example.json` 写一个 `config.json`。所有参数：`npm start -- --help`。
+Folders can also be added from the header bar once the server is running (they are saved to
+`config.json`), or written into a `config.json` copied from `config.example.json`. All options:
+`npm start -- --help`.
 
-手头没有素材想先看看效果：`npm run samples` 把 GoPro 官方的样片下载到 `samples/`，然后 `npm start -- --media samples`。
+No footage to hand? `npm run samples` fetches GoPro's public sample clips into `samples/`, then
+`npm start -- --media samples`.
 
-关于浏览器：HERO 系列默认录的 HEVC（`GX…` 文件）在 Safari 里能放，Chrome 在 Apple Silicon 的 Mac 上能放（其他平台取决于有没有硬解）；H.264（`GH…` 文件）哪儿都能放。放不了的时候勾上 **Proxy (LRV)**，用相机自带的低清代理文件回放（导入时默认会一起带过来），遥测数据完全一样。
+### Run at login, and as a desktop app (macOS)
 
-macOS 上开机自启：`npm run autostart`（launchd 代理，崩了自动拉起；`npm run autostart:status` 看状态，`npm run autostart:remove` 卸载）。服务常驻之后，在 Chrome 里打开 http://127.0.0.1:8790 → ⋮ 菜单 → *Cast, save and share* → *Install page as app…*，就有了独立窗口和 Dock 图标。
+```bash
+npm run autostart          # launchd agent: starts the server at login, restarts it if it crashes
+npm run autostart:status   # agent state and health check
+npm run autostart:remove
+```
 
-## 从相机导入
+The agent runs the server in this folder and logs to `.cache/server.log`. With it always on, open
+http://127.0.0.1:8790 in Chrome → ⋮ menu → *Cast, save and share* → *Install page as app…* for a
+window and a Dock icon of its own; the page ships a web-app manifest and icons, so Chrome offers this
+by itself.
 
-1. 相机里 Preferences › Connections › USB Connection 选 **GoPro Connect**（出厂默认就是）。这个模式下相机插上电脑不是 U 盘，而是一块 USB 网卡，工具通过 Open GoPro 的 HTTP 接口和它对话。
-2. USB 线插上，点页面顶部的 **Import from camera**。对话框列出卡里的所有片段：新的默认勾上，导过的不勾（状态一栏写着哪天导到了哪里）。
-3. **Choose folder…** 弹出 macOS 自己的文件夹选择面板，选目标目录（记住上次的选择）。每个片段可以带上 **LRV** 低清代理（默认勾选，HEVC 放不了时靠它）和 **THM** 缩略图（默认不勾）。
-4. **Import**。文件按录制日期放进 `<目标目录>/<YYYY-MM-DD>/`，逐个按字节数校验，导完目标目录自动加入媒体库。可以关掉对话框继续看片子，状态栏会跟着进度；**Stop** 随时中断，没传完的文件下次接着传。
-5. 导完会问一句：要不要把刚导入的片段从相机上删掉（LRV、THM 一起删）。**Keep on camera** 就什么都不动。只有这次完整导入的片段才会出现在删除列表里。
+## Import from the camera
 
-导过的记录存在 `import-ledger.json` 里：即使本地文件后来删了，也不会被自动再导一遍；想重导，手动勾上即可（本地还完整的会直接校验通过，不重新下载）。
+1. Set the camera's USB connection to **GoPro Connect** (Preferences › Connections › USB Connection;
+   it is the factory default). In that mode the camera is not a drive but a small USB network, and
+   the viewer talks to it over the Open GoPro HTTP API.
+2. Plug it in and press **Import from camera**. The dialog lists the card: new clips ticked, clips
+   imported before unticked, with the date and destination of that earlier import.
+3. **Choose folder…** opens the Mac's own folder panel for the destination, starting where you left
+   it last time. Each clip can bring its **LRV proxy** (ticked by default — the file the viewer falls
+   back to when HEVC will not decode) and its **THM thumbnail** (unticked by default). Both choices
+   are remembered.
+4. **Import.** Clips are filed under `<destination>/<YYYY-MM-DD>/` by recording date, verified byte
+   for byte, and the destination joins the media library when the job ends. Close the dialog and
+   carry on watching if you like — the status bar follows the job. **Stop** halts it; a
+   half-transferred file stays as `.part` and resumes next time.
+5. When it finishes, the dialog asks whether to **delete what it just imported from the camera**
+   (the LRV and THM go with the clip). *Keep on camera* leaves the card untouched. Only clips that
+   arrived complete in that job are ever offered for deletion.
 
-速度：HERO13 走的是 USB 2.0，实测 43 MB/s 左右，33 GB 大约 13 分钟。
+`import-ledger.json` remembers everything that has been imported, whether or not the local copy still
+exists, so nothing is fetched twice by accident. Tick a clip by hand to bring it in again; if the
+copy at the destination is still complete it is verified rather than downloaded.
 
-对话框显示 **No camera**：相机休眠了、USB 模式设成了 MTP、或者有别的程序（MacDroid、adb 之类）占着 USB 设备——唤醒、改模式、退掉那个程序，再点 **Look again**。
+A HERO13 transfers at the USB 2.0 ceiling, about 43 MB/s — roughly 13 minutes for 33 GB.
 
-## 地图
+**No camera** in the dialog: the camera is asleep, its USB connection is set to MTP instead of GoPro
+Connect, or another program (MacDroid, adb) is holding the device. Fix that, then press
+**Look again**.
 
-默认（`"map": { "provider": "osm" }`）用 OpenStreetMap 的数据：矢量瓦片来自 [OpenFreeMap](https://openfreemap.org)（全球到 14 级，不要 key、不限量），卫星视图是 Esri World Imagery 加同一套标注叠加层，浏览器直接取瓦片，服务端不经手。底图卡片在地图左下角，`B` 键切换；卫星视图上的 **Labels** 开关控制标注层。选择记在浏览器里，`config.json` 只决定第一次打开的默认值。
+## The map
 
-`"provider": "k2"` 把同样两套样式切到 K2 地图服务（map.lumobility.com，阿联酋范围内细节更好），需要在 `config.json` 的 `map` 里填 token——token 只在服务端签名，不会发到浏览器。OSM 样式是从 K2 样式派生的（`node scripts/make-osm-styles.js`），改了 K2 样式重跑一次，测试会检查派生文件有没有过期。
+Out of the box (`"map": { "provider": "osm" }`) the data comes from OpenStreetMap: vector tiles from
+[OpenFreeMap](https://openfreemap.org) (the whole world to z14, no key, no quota) and Esri World
+Imagery for the satellite view, with the same label overlay on top. The browser fetches the tiles
+directly. The basemap card sits at the bottom left, `B` cycles it, and the **Labels** chip on the
+satellite card hides the place and road labels over the imagery. The choice is remembered per
+browser; `config.json` only supplies the first-run default.
 
-## 导出
+`"provider": "k2"` renders the same two styles from the K2 map service (`map.lumobility.com`), which
+covers the UAE in more detail and needs a token in the `map` block of `config.json`:
 
-选中一段录像，控制栏的 Export：**GPX**（有定位的轨迹点，含海拔、时间、速度）、**GeoJSON**（每段连续定位一条 LineString，带统计和相机设置，QGIS / kepler.gl / geopandas 直接打开）、**CSV**（每个 GPS 采样点，含定位状态和 DOP）、**IMU**（25 Hz 加速度 CSV）。
+```json
+"map": { "provider": "k2", "token": "…", "basemap": "streets", "labels": true }
+```
 
-命令行批量提取（多个文件视为同一段录像的连续分段）：
+The token stays server-side — the server signs every tile request itself, and `config.json` is
+git-ignored. The OSM styles are derived from the K2 ones by `node scripts/make-osm-styles.js`; edit a
+K2 style, rerun it, and the test suite will tell you if you forgot.
+
+## Export
+
+With a recording selected, the controls bar offers **GPX** (positioned track points with elevation,
+time and speed), **GeoJSON**, **CSV** (every GPS sample, fix state and DOP included) and **IMU**
+(25 Hz accelerometer CSV). The GeoJSON is a `FeatureCollection` with one `LineString` per unbroken
+run of positioned samples — a lost fix or a gap over 5 s starts a new one — with altitude as the
+third ordinate, per-run statistics and camera settings in `properties`, and per-point `times` and
+`speeds` in `properties.coordinateProperties`. It opens as it is in QGIS, kepler.gl or geopandas.
+
+Exports are deliberately unfiltered: they carry the camera's own speeds with the `dop` column beside
+them, so you can apply whatever rule your analysis needs.
+
+From the command line (several files are treated as consecutive chapters of one recording):
 
 ```bash
 node scripts/dump-telemetry.js GX010042.MP4 GX020042.MP4 --format gpx --out ride.gpx
-node scripts/dump-telemetry.js GX010042.MP4 --format csv          # GPS 表，直接喂 pandas
-node scripts/dump-telemetry.js GX010042.MP4 --format csv-accl     # 25 Hz 加速度
-node scripts/dump-telemetry.js GX010042.MP4                       # 完整 JSON（和 API 一样）
+node scripts/dump-telemetry.js GX010042.MP4 --format csv          # GPS table for pandas
+node scripts/dump-telemetry.js GX010042.MP4 --format csv-accl     # 25 Hz accelerometer
+node scripts/dump-telemetry.js GX010042.MP4                       # full JSON (same as the API)
 ```
 
-## 快捷键
+## Keyboard
 
-| 键 | 作用 |
+| Key | Action |
 | --- | --- |
-| `Space` | 播放 / 暂停 |
-| `←` / `→` | 按 Skip 步长后退 / 前进（默认 5 秒；可选 1/2/5/10 帧或 1–60 秒；按住 `Shift` ×6） |
-| `,` / `.` | 上一帧 / 下一帧 |
-| `[` / `]` | 上一段 / 下一段 |
-| `Home` / `End` | 开头 / 结尾 |
-| `M`（或 `L`） | 地图跟随开关 |
-| `F` | 地图缩放到全程 |
-| `B` | 切换底图（街道 ↔ 卫星） |
-| `H` | 显示 / 隐藏 HUD |
-| `G` | 显示 / 隐藏仪表 |
-| 双击视频 | 全屏 |
+| `Space` | play / pause |
+| `←` / `→` | skip back / forward by the Skip step (default 5 s; 1/2/5/10 frames or 1–60 s; hold `Shift` for ×6) |
+| `,` / `.` | previous / next frame |
+| `[` / `]` | previous / next chapter |
+| `Home` / `End` | start / end |
+| `M` (or `L`) | follow the current position on the map |
+| `F` | fit the map to the whole route |
+| `B` | switch basemap (Map ↔ Satellite) |
+| `H` | show / hide the HUD |
+| `G` | show / hide the gauges |
+| double-click the video | fullscreen |
 
-## 已知限制
+## Known limits
 
-- 只在 macOS + HERO13 Black 上验证过。GPMF 遥测格式各代 GoPro 通用（测试用例里就有官方样片），其他型号大概率能放，但导入没有在别的相机上试过。
-- 选目标目录的面板是 macOS 的。服务跑在别的系统上时，把目标目录写进 `config.json` 的 `import.dest`，其余步骤照旧。
-- 侧栏里的录制时间是相机的本地时间（HERO12 以后文件头写的是 UTC，工具会按文件头里的时区换算；更老的相机文件头本来就是本地时间）；鼠标悬停能看到 UTC，HUD 里同时有 UTC 和本地时间。
-- 视频始终静音：这是看数据的工具，不是播放器。
-- 地图瓦片来自公共服务（OpenFreeMap、Esri），需要联网；其余功能离线可用。
+- Verified on macOS with a HERO13 Black. GPMF is common to every GoPro generation — the sample clips
+  from `npm run samples` cover HERO5 through MAX and all play — but the camera import has only been
+  exercised on a HERO13.
+- The folder panel is macOS-only. On another system set `import.dest` in `config.json`; the rest of
+  the import works the same.
+- The sidebar shows the camera's local recording time. HERO12 and newer write true UTC into the file
+  header and the viewer converts it back with the recorded time zone; older cameras write local time
+  there already. Hover a recording for its UTC start; the HUD shows both clocks.
+- Playback is always muted. This is a telemetry review tool, not a media player, so the audio track
+  is never rendered.
+- Map tiles come from public services (OpenFreeMap, Esri) and need a connection. Everything else
+  works offline.
 
-## 项目结构与开发
+## Troubleshooting
+
+**"Cannot play / source not supported"** — the browser cannot decode the codec. Use Safari or Chrome
+on Apple Silicon for HEVC, or switch on the LRV proxy; the app does that by itself when a proxy
+exists. **"No usable GPS fix"** — the receiver never locked (GPS switched off, indoors, the first
+seconds after power-on); the video still plays. **Stale figures after re-encoding a file** — delete
+`.cache/`. **The folder panel never appears** — it is opened by the server on its own machine, so it
+works with `npm start` and with the launchd agent, but not when the server runs somewhere else.
+
+## Project layout
 
 ```
-server/   Node 服务：MP4 解析（只读 moov）、GPMF 解码、媒体库扫描、HTTP API、导出、相机导入
-web/      浏览器界面：原生 ES 模块，没有构建步骤；styles/ 是 MapLibre 样式
-tests/    node --test 测试 + 5 秒的 GoPro 样片 + 一个假相机（导入测试用）
-scripts/  命令行提取、样片下载、macOS 自启、OSM 样式派生
-docs/     SPEC.md（设计与决策）、screenshots/
+server/   Node server: mp4.js (moov-only demuxer), gpmf-klv.js (settings header, sensor
+          orientation), gpmf-probe.js (scan-time GPS fix probe), decode.js (gopro-telemetry
+          wrapper), telemetry.js (pipeline), library.js (scan + chapter grouping), camera-clock.js
+          (what a creation time means per camera generation), app.js (routes), export.js
+          (GPX/GeoJSON/CSV), map.js (K2 tile + glyph proxy), importer.js (import plan and job),
+          gopro-camera.js (Open GoPro HTTP client over USB), import-ledger.js, folder-picker.js
+          (macOS folder panel), geo.js (positions, runs, run statistics, speed rule), config.js,
+          fs-util.js, http-error.js, json-cache.js, ids.js, log.js, index.js
+web/      browser UI — plain ES modules, no build step, PWA manifest and icons: app.js (wiring,
+          keys), player, map (+ map-route, map-controls, map-shields), charts, timeline, track,
+          motion, gauges, hud, stats, library, import (dialog), util, api; styles/ holds the two K2
+          MapLibre styles and the two OSM styles derived from them
+tests/    node --test suite + 5-second GoPro fixtures (see tests/fixtures/README.md) + a fake camera
+          (fake-camera.js) for the import tests
+scripts/  dump-telemetry.js (CLI), make-osm-styles.js (K2 styles → OSM styles), fetch-samples.sh,
+          macos-launch-agent.sh (run at login)
+docs/     SPEC.md, screenshots/
+.cache/   per-file metadata and telemetry cache (safe to delete)
 ```
+
+## Development
 
 ```bash
-npm test          # 103 个测试
-npm run lint      # ESLint（有警告即失败：函数不超过 40 行、圈复杂度不超过 12、不留死代码）
-npm run dev       # 带 --watch 的服务
+npm test          # 103 tests: demuxer, library, camera clock, telemetry and geodesy, exports,
+                  # config, HTTP API, map proxy and OSM styles, route geometry, browser helpers, import
+npm run lint      # ESLint, warnings fail: no unused code, functions ≤ 40 lines, complexity ≤ 12
+npm run dev       # server with --watch
+LOG_LEVEL=debug npm start -- --media <dir>
 ```
 
-## 致谢
+[`docs/SPEC.md`](docs/SPEC.md) is the single source of truth for scope, architecture, data contracts
+and acceptance criteria. Change the spec first, then the code.
 
-遥测解码 [gopro-telemetry](https://github.com/JuanIrache/gopro-telemetry)（MIT），海拔校正 egm96-universal，地图渲染 MapLibre GL JS，底图数据 OpenStreetMap 贡献者与 OpenFreeMap，卫星影像 Esri，K2 Maps（map.lumobility.com），曲线 uPlot。测试样片来自 gopro/gpmf-parser（Apache-2.0）。
+English is the project language — code, comments, commit messages, the spec and the interface are all
+written in it. [`README.zh-CN.md`](README.zh-CN.md) is a translation of this file and follows it.
 
-MIT 协议。如果你也拿 GoPro 当行车记录仪，希望它能帮到你。
+## Credits
+
+Telemetry decoding by [gopro-telemetry](https://github.com/JuanIrache/gopro-telemetry) (MIT),
+altitude correction by egm96-universal, map rendering by MapLibre GL JS, basemap data from
+OpenStreetMap contributors and OpenFreeMap, satellite imagery by Esri, map styles from K2 Maps
+(map.lumobility.com), charts by uPlot. The test fixtures are cut from GoPro's public samples in
+gopro/gpmf-parser (Apache-2.0).
+
+MIT licensed. If you also run a GoPro on the windscreen, I hope it saves you an evening.
